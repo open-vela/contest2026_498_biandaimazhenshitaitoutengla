@@ -1,0 +1,3314 @@
+=== BEGIN robot3 ===
+--- date ---
+2026-09-19T14:16:53+08:00
+--- uname ---
+Linux robot3 6.12.47+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.47-1+rpt1~bookworm (2025-09-16) aarch64 GNU/Linux
+
+--- /home/pi/docker tree ---
+total 16
+drwxr-xr-x  4 pi pi 4096 Oct 23  2024 .
+drwx------ 56 pi pi 4096 Sep 19 09:44 ..
+drwxr-xr-x  2 pi pi 4096 Oct 10  2024 src
+drwxr-xr-x  3 pi pi 4096 Sep 18 12:33 tmp
+d       4096 /home/pi/docker
+d       4096 /home/pi/docker/src
+f        117 /home/pi/docker/src/apply.sh
+f       1197 /home/pi/docker/src/config.yaml
+f        576 /home/pi/docker/src/copy.sh
+f      18600 /home/pi/docker/src/exchange.py
+f      43356 /home/pi/docker/src/in.py
+f       9469 /home/pi/docker/src/lane_detect.py
+f      19100 /home/pi/docker/src/out.py
+f      43137 /home/pi/docker/src/pallezting.py
+f       3065 /home/pi/docker/src/self_driving.launch.py
+f      17411 /home/pi/docker/src/self_driving.py
+f      42392 /home/pi/docker/src/sorting.py
+d       4096 /home/pi/docker/tmp
+
+--- /home/pi/docker text file contents (non-tmp) ---
+### FILE: /home/pi/docker/src/in.py
+#!/usr/bin/python3
+# coding=utf8
+# Date:2024/02/05
+# Author:Aiden
+# 第13章 ArmPi FPV创意玩法课程\2.智慧仓储课程\第3课 智能入库
+import cv2
+import math
+import rospy
+import queue
+import signal
+import threading
+import numpy as np
+from threading import Timer
+
+from sensor_msgs.msg import Image
+from std_srvs.srv import Trigger, SetBool, SetBoolResponse
+
+from warehouse.msg import Grasp
+from warehouse.srv import SetInTarget
+from hiwonder_servo_msgs.msg import MultiRawIdPosDur
+from ros_robot_controller.msg import RGBState, RGBsState, BuzzerState 
+
+from armpi_fpv_common import pid, misc, common, apriltag
+from hiwonder_servo_controllers import bus_servo_control
+from armpi_fpv_kinematics.kinematics_control import set_pose_target
+
+# 入库           
+# 如未声明，使用的长度，距离单位均为m
+d_tag_map = 0
+
+tag_z_min = 0.01
+tag_z_max = 0.015
+
+d_color_map = 30
+
+color_z_min = 0.01
+color_z_max = 0.015
+d_color_y = 20
+color_y_adjust = 400
+
+center_x = 320
+
+running = False
+
+lock = threading.RLock()
+
+mask1 = cv2.imread('/home/ubuntu/armpi_fpv/src/object_sorting/scripts/mask1.jpg', 0)
+mask2 = cv2.imread('/home/ubuntu/armpi_fpv/src/object_sorting/scripts/mask2.jpg', 0)
+rows, cols = mask1.shape
+
+# 初始位置
+def initMove(delay=True):
+    with lock:
+        bus_servo_control.set_servos(joints_pub, 1.5, ((1, 200), (2, 500), (3, 80), (4, 825), (5, 625), (6, 500)))
+    if delay:
+        rospy.sleep(2)
+ 
+# 关闭rgb
+def set_rgb(r, g, b):
+    rgb1 = RGBState()
+    rgb1.id = 1
+    rgb1.r = r
+    rgb1.g = g
+    rgb1.b = b
+    rgb2 = RGBState()
+    rgb2.id = 2
+    rgb2.r = r
+    rgb2.g = g
+    rgb2.b = b
+    msg = RGBsState()
+    msg.data = [rgb1, rgb2]
+    rgb_pub.publish(msg)
+ 
+x_dis = 500
+Y_DIS = 0
+y_dis = Y_DIS
+last_x_dis = x_dis
+last_x_dis = y_dis
+x_pid = pid.PID(P=0.01, I=0.001, D=0)#pid初始化
+y_pid = pid.PID(P=0.00001, I=0, D=0)
+
+tag_x_dis = 500
+tag_y_dis = 0
+tag_x_pid = pid.PID(P=0.02, I=0.001, D=0)#pid初始化
+tag_y_pid = pid.PID(P=0.02, I=0, D=0)
+
+stop_state = 0
+move_state = 1
+adjust = False
+approach = False
+rotation_angle = 0
+start_move = False
+adjust_error = False
+last_X, last_Y = 0, 0
+box_rotation_angle = 0
+last_box_rotation_angle = 0
+tag1 = ['tag1', -1, -1, -1, 0]
+tag2 = ['tag2', -1, -1, -1, 0]
+tag3 = ['tag3', -1, -1, -1, 0]
+current_tag = ['tag1', 'tag2', 'tag3']
+detect_color = ('red', 'green', 'blue')
+
+count = 0
+count2 = 0
+count3 = 0
+count_d = 0
+count_timeout = 0
+count_tag_timeout = 0
+count_adjust_timeout = 0
+# 变量重置
+def reset():
+    global X, Y
+    global adjust    
+    global approach
+    global move_state
+    global start_move
+    global current_tag
+    global detect_color
+    global x_dis, y_dis
+    global adjust_error
+    global last_X, last_Y
+    global tag1, tag2, tag3
+    global box_rotation_angle
+    global tag_x_dis, tag_y_dis
+    global last_x_dis, last_y_dis
+    global rotation_angle, last_box_rotation_angle    
+    global count, count2, count3, count_timeout, count_adjust_timeout, count_d, count_tag_timeout
+    
+    with lock:
+        X = 0
+        Y = 0
+        
+        x_dis = 500
+        y_dis = Y_DIS
+        tag_x_dis = 500
+        tag_y_dis = 0    
+        x_pid.clear()
+        y_pid.clear()
+        tag_x_pid.clear()
+        tag_y_pid.clear()
+        last_x_dis = x_dis
+        last_y_dis = y_dis
+        
+        adjust = False
+        approach = False
+        start_move = False
+        adjust_error = False
+        
+        move_state = 1
+        set_rgb(0, 0, 0)
+        rotation_angle = 0
+        box_rotation_angle = 0
+        last_box_rotation_angle = 0
+
+        count = 0
+        count2 = 0
+        count3 = 0
+        count_d = 0
+        count_timeout = 0
+        count_tag_timeout = 0
+        count_adjust_timeout = 0
+
+        tag1 = ['tag1', -1, -1, -1, 0]
+        tag2 = ['tag2', -1, -1, -1, 0]
+        tag3 = ['tag3', -1, -1, -1, 0]
+        current_tag = ['tag1', 'tag2', 'tag3']
+        detect_color = ('red', 'green', 'blue')
+
+color_range = None
+# app初始化调用
+def init():
+    global stop_state
+    global color_range
+    global target_data
+
+    rospy.loginfo("in Init")
+    # 获取lab参数
+    color_range = rospy.get_param('/lab_config_manager/color_range_list', {})  # get lab range from ros param server
+    stop_state = 0
+    target_data = ((), ())
+    initMove()
+    reset()
+
+y_d = 0
+roll_angle = 0
+gripper_rotation = 0
+# 木块对角长度一半
+square_diagonal = 0.03*math.sin(math.pi/4)
+F = 1000/240.0
+# 夹取
+def pick(grasps, have_adjust=False):
+    global roll_angle, last_x_dis
+    global adjust, x_dis, y_dis, tag_x_dis, tag_y_dis, adjust_error, gripper_rotation
+    
+    position = grasps.grasp_pos.position
+    rotation = grasps.grasp_pos.rotation
+    approach = grasps.grasp_approach
+    retreat = grasps.grasp_retreat
+     
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+    
+    if not running:
+        return False 
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        if not have_adjust:
+            servo_data = target1[1]
+            bus_servo_control.set_servos(joints_pub, 1.8, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]))) 
+            rospy.sleep(2)
+            if not running:
+                return False
+            
+            # 第三步：移到目标点
+            target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+            servo_data = target2[1]
+            bus_servo_control.set_servos(joints_pub, 1.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]))) 
+            rospy.sleep(2)
+            if not running:
+                target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))    
+                rospy.sleep(1)            
+                return False
+            
+            roll_angle = target2[3][1]
+            gripper_rotation = box_rotation_angle
+
+            x_dis = tag_x_dis = last_x_dis = 1000 - target2[1][0]
+            y_dis = tag_y_dis =0
+            
+            if state == 'color':
+                # 第四步：微调整位置
+                if not adjust:
+                    adjust = True
+                    return True
+            else:
+                return True
+        else:
+            # 第五步: 对齐
+            bus_servo_control.set_servos(joints_pub, 0.5, ((2, 500 + int(F*gripper_rotation)), ))
+            rospy.sleep(0.8)
+            if not running:
+                target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]))) 
+                rospy.sleep(1)             
+                return False
+            
+            # 第六步：夹取
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.grasp_posture - 80), ))               
+            rospy.sleep(0.8)
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.grasp_posture), ))               
+            rospy.sleep(0.8)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+                rospy.sleep(0.5)
+                target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))      
+                rospy.sleep(1)             
+                return False
+            
+            # 第七步：抬升物体
+            if grasps.up != 0:
+                target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+                servo_data = target3[1]
+                bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+                rospy.sleep(0.6)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+                rospy.sleep(0.5)
+                target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))      
+                rospy.sleep(1)             
+                return False
+            
+            # 第八步：移到撤离点
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            if servo_data != target3[1]:    
+                bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+                rospy.sleep(0.5)
+                if not running:
+                    bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+                    rospy.sleep(0.5)                
+                    return False
+                
+            # 第九步：移到稳定点
+            bus_servo_control.set_servos(joints_pub, 1, ((2, 500), (3, 80), (4, 825), (5, 625)))
+            rospy.sleep(1)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+                rospy.sleep(0.5)            
+                return False
+            
+            return target2[3][1]
+    else:
+        rospy.loginfo('pick failed')
+        return False
+
+def place(places):
+    position = places.grasp_pos.position
+    rotation = places.grasp_pos.rotation
+    approach = places.grasp_approach
+    retreat = places.grasp_retreat
+    
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+    
+    if not running:
+        return False
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        # 第一步：云台转到朝向目标方向
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.8, ((1, places.pre_grasp_posture), (2, int(F*rotation.y)), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(0.8)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)            
+            return False
+        
+        # 第二步：移到接近点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))   
+        rospy.sleep(0.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)             
+            return False
+        
+        # 第三步：移到目标点
+        target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+        servo_data = target2[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+        rospy.sleep(1)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))      
+            rospy.sleep(1)              
+            return False
+        
+        # 第四步：抬升
+        if places.up != 0:
+            target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+            servo_data = target3[1]
+            bus_servo_control.set_servos(joints_pub, 0.4, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))      
+            rospy.sleep(1)              
+            return False
+
+        # 第五步：放置
+        bus_servo_control.set_servos(joints_pub, 0.1, ((1, places.pre_grasp_posture - 20), ))         
+        rospy.sleep(0.2)        
+        bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))         
+        rospy.sleep(1)
+        if not running:
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)              
+            return False
+        
+        # 第六步：移到撤离点
+        target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+        servo_data = target4[1]
+        if servo_data != target3[1]:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.5)
+            if not running:
+                return False
+            
+        # 第七步：移到稳定点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((2, 500), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(0.5)
+        if not running:
+            return False
+        
+        return True
+    else:
+        rospy.loginfo('place failed')
+        return False
+### ENDFILE: /home/pi/docker/src/in.py
+### FILE: /home/pi/docker/src/pallezting.py
+#!/usr/bin/python3
+# coding=utf8
+# Date:2024/02/05
+# Author:Aiden
+# 第13章 ArmPi FPV创意玩法课程\1.AI视觉创意玩法\第5课 智能码垛
+import cv2
+import copy
+import math
+import queue
+import rospy
+import signal
+import threading
+import numpy as np
+from threading import Timer
+
+from sensor_msgs.msg import Image
+from std_srvs.srv import Trigger, SetBool, SetBoolResponse
+
+from warehouse.msg import Grasp
+from hiwonder_servo_msgs.msg import MultiRawIdPosDur
+from ros_robot_controller.msg import RGBState, RGBsState, BuzzerState 
+
+from armpi_fpv_common import pid, misc, common, apriltag
+from hiwonder_servo_controllers import bus_servo_control
+from armpi_fpv_kinematics.kinematics_control import set_pose_target, go_pose_target
+
+# 码剁
+# 如未声明，使用的长度，距离单位均为m
+d_tag_map = 0
+
+tag_z_min = 0.01
+tag_z_max = 0.015
+
+d_color_map = 30
+
+color_z_min = 0.01
+color_z_max = 0.015
+d_color_y = 20
+color_y_adjust = 400
+
+center_x = 320
+
+target_data = (('red', 'green', 'blue'), ('tag1', 'tag2', 'tag3'))
+
+running = False
+
+lock = threading.RLock()
+
+mask1 = cv2.imread('/home/ubuntu/armpi_fpv/src/object_sorting/scripts/mask1.jpg', 0)
+mask2 = cv2.imread('/home/ubuntu/armpi_fpv/src/object_sorting/scripts/mask2.jpg', 0)
+rows, cols = mask1.shape
+
+################################################
+# 放置坐标x, y, z(m)
+place_position = {'red':  [0.14, -0, 0.01],
+                  'green':[0.14, -0, 0.01],
+                  'blue': [0.14, -0, 0.01],
+                  'tag1': [-0.14, -0, 0.01],
+                  'tag2': [-0.14, -0, 0.01],
+                  'tag3': [-0.14, -0, 0.01]}
+################################################
+
+# 初始位置
+def initMove(delay=True):
+    with lock:
+        bus_servo_control.set_servos(joints_pub, 1.5, ((1, 200), (2, 500), (3, 80), (4, 825), (5, 625), (6, 500)))
+    if delay:
+        rospy.sleep(2)
+ 
+def set_rgb(r, g, b):
+    rgb1 = RGBState()
+    rgb1.id = 1
+    rgb1.r = r
+    rgb1.g = g
+    rgb1.b = b
+    rgb2 = RGBState()
+    rgb2.id = 2
+    rgb2.r = r
+    rgb2.g = g
+    rgb2.b = b
+    msg = RGBsState()
+    msg.data = [rgb1, rgb2]
+    rgb_pub.publish(msg)
+ 
+x_dis = 500
+Y_DIS = 0
+y_dis = Y_DIS
+last_x_dis = x_dis
+last_x_dis = y_dis
+x_pid = pid.PID(P=0.01, I=0.001, D=0)#pid初始化
+y_pid = pid.PID(P=0.000008, I=0, D=0)
+
+tag_x_dis = 500
+tag_y_dis = 0
+tag_x_pid = pid.PID(P=0.01, I=0.001, D=0)#pid初始化
+tag_y_pid = pid.PID(P=0.02, I=0, D=0)
+
+stop_state = 0
+move_state = 1
+adjust = False
+approach = False
+rotation_angle = 0
+start_move = False
+adjust_error = False
+last_X, last_Y = 0, 0
+box_rotation_angle = 0
+last_box_rotation_angle = 0
+tag1 = ['tag1', -1, -1, -1, 0]
+tag2 = ['tag2', -1, -1, -1, 0]
+tag3 = ['tag3', -1, -1, -1, 0]
+current_tag = ['tag1', 'tag2', 'tag3']
+detect_color = ('red', 'green', 'blue')
+
+count = 0
+count2 = 0
+count3 = 0
+count_d = 0
+count_timeout = 0
+count_tag_timeout = 0
+count_adjust_timeout = 0
+# 变量重置
+def reset():
+    global X, Y
+    global adjust    
+    global approach
+    global move_state
+    global start_move
+    global current_tag
+    global detect_color
+    global x_dis, y_dis
+    global adjust_error
+    global last_X, last_Y
+    global tag1, tag2, tag3
+    global box_rotation_angle
+    global tag_x_dis, tag_y_dis
+    global last_x_dis, last_y_dis
+    global rotation_angle, last_box_rotation_angle    
+    global count, count2, count3, count_timeout, count_adjust_timeout, count_d, count_tag_timeout
+    
+    with lock:
+        X = 0
+        Y = 0
+        
+        x_dis = 500
+        y_dis = Y_DIS
+        tag_x_dis = 500
+        tag_y_dis = 0    
+        x_pid.clear()
+        y_pid.clear()
+        tag_x_pid.clear()
+        tag_y_pid.clear()
+        last_x_dis = x_dis
+        last_y_dis = y_dis
+        
+        adjust = False
+        approach = False
+        start_move = False
+        adjust_error = False
+        
+        move_state = 1
+        set_rgb(0, 0, 0)
+        rotation_angle = 0
+        box_rotation_angle = 0
+        last_box_rotation_angle = 0
+
+        count = 0
+        count2 = 0
+        count3 = 0
+        count_d = 0
+        count_timeout = 0
+        count_tag_timeout = 0
+        count_adjust_timeout = 0
+
+        tag1 = ['tag1', -1, -1, -1, 0]
+        tag2 = ['tag2', -1, -1, -1, 0]
+        tag3 = ['tag3', -1, -1, -1, 0]
+        current_tag = ['tag1', 'tag2', 'tag3']
+        detect_color = ('red', 'green', 'blue')
+
+color_range = None
+# app初始化调用
+def init():
+    global stop_state
+    global color_range
+
+    rospy.loginfo("object pallezting Init")
+    # 获取lab参数
+    color_range = rospy.get_param('/lab_config_manager/color_range_list', {})  # get lab range from ros param server
+    initMove()
+    stop_state = 0
+    reset_position()
+    reset()
+
+place_z_color = copy.deepcopy(place_position['red'][2])
+place_z_tag = copy.deepcopy(place_position['red'][2])
+def reset_position():
+    global place_z_color
+    global place_z_tag 
+
+    place_z_color = copy.deepcopy(place_position['red'][2])
+    place_z_tag = copy.deepcopy(place_position['red'][2])
+
+y_d = 0
+roll_angle = 0
+gripper_rotation = 0
+# 木块对角长度一半
+square_diagonal = 0.03*math.sin(math.pi/4)
+F = 1000/240.0
+# 夹取
+def pick(grasps, have_adjust=False):
+    global roll_angle, last_x_dis
+    global adjust, x_dis, y_dis, tag_x_dis, tag_y_dis, adjust_error, gripper_rotation
+    
+    position = grasps.grasp_pos.position
+    rotation = grasps.grasp_pos.rotation
+    approach = grasps.grasp_approach
+    retreat = grasps.grasp_retreat
+     
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+    
+    if not running:
+        return False 
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        if not have_adjust:
+            servo_data = target1[1]
+            bus_servo_control.set_servos(joints_pub, 1.8, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]))) 
+            rospy.sleep(2)
+            if not running:
+                return False
+            
+            # 第三步：移到目标点
+            target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+            servo_data = target2[1]
+            bus_servo_control.set_servos(joints_pub, 1.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+            rospy.sleep(2)
+            if not running:
+                target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))       
+                rospy.sleep(1)            
+                return False
+            
+            roll_angle = target2[3][1]
+            gripper_rotation = box_rotation_angle
+
+            x_dis = tag_x_dis = last_x_dis = 1000 - target2[1][0]
+            y_dis = tag_y_dis =0
+            
+            if state == 'color':
+                # 第四步：微调整位置
+                if not adjust:
+                    adjust = True
+                    return True
+            else:
+                return True
+        else:
+            # 第五步: 对齐
+            bus_servo_control.set_servos(joints_pub, 0.5, ((2, 500 + int(F*gripper_rotation)), ))
+            rospy.sleep(0.8)
+            if not running:
+                target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))       
+                rospy.sleep(1)             
+                return False
+            
+            # 第六步：夹取
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.grasp_posture), ))               
+            rospy.sleep(0.8)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+                target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+                rospy.sleep(0.5)            
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))       
+                rospy.sleep(1)             
+                return False
+            
+            # 第七步：抬升物体
+            if grasps.up != 0:
+                target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+                servo_data = target3[1]
+                bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+                rospy.sleep(0.6)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+                target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+                rospy.sleep(0.5)            
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))       
+                rospy.sleep(1)             
+                return False
+            
+            # 第八步：移到撤离点
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            if servo_data != target3[1]:    
+                bus_servo_control.set_servos(joints_pub, 1, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))        
+                rospy.sleep(1)
+                if not running:
+                    bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+                    rospy.sleep(0.5)                
+                    return False
+                
+            # 第九步：移到稳定点
+            bus_servo_control.set_servos(joints_pub, 1.5, ((2, 500), (3, 80), (4, 825), (5, 625)))
+            rospy.sleep(1.5)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+                rospy.sleep(0.5)            
+                return False
+            
+            return target2[3][1]
+    else:
+        rospy.loginfo('pick failed')
+        return False
+
+def place(places):
+    position = places.grasp_pos.position
+    rotation = places.grasp_pos.rotation
+    approach = places.grasp_approach
+    retreat = places.grasp_retreat
+    
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+    if not running:
+        return False
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        # 第一步：云台转到朝向目标方向
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 1, ((1, places.pre_grasp_posture), (2, int(F*rotation.y)), (3, 150), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(1)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)            
+            return False
+        
+        # 第二步：移到接近点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 1.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))      
+        rospy.sleep(1.6)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)             
+            return False
+        
+        # 第三步：移到目标点
+        target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+        servo_data = target2[1]
+        bus_servo_control.set_servos(joints_pub, 1, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0]))) 
+        rospy.sleep(1.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            rospy.sleep(0.5)             
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)              
+            return False
+        
+        # 第四步：抬升
+        if places.up != 0:
+            target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+            servo_data = target3[1]
+            bus_servo_control.set_servos(joints_pub, 0.8, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.8)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            rospy.sleep(0.5)             
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)              
+            return False
+
+        # 第五步：放置
+        bus_servo_control.set_servos(joints_pub, 0.4, ((1, places.pre_grasp_posture - 40), ))         
+        rospy.sleep(0.8)        
+        bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))         
+        rospy.sleep(1)
+        if not running:
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)              
+            return False
+        
+        # 第六步：移到撤离点
+        target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+        servo_data = target4[1]
+        if servo_data != target3[1]:
+            bus_servo_control.set_servos(joints_pub, 0.6, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+### ENDFILE: /home/pi/docker/src/pallezting.py
+### FILE: /home/pi/docker/src/self_driving.py
+#!/usr/bin/env python3
+# encoding: utf-8
+# @data:2023/03/28
+# @author:aiden
+# autonomous driving
+import os
+import cv2
+import math
+import time
+import queue
+import rclpy
+import threading
+import numpy as np
+import sdk.pid as pid
+import sdk.fps as fps
+from rclpy.node import Node
+import sdk.common as common
+# from app.common import Heart
+from cv_bridge import CvBridge
+from sensor_msgs.msg import Image
+from geometry_msgs.msg import Twist
+from interfaces.msg import ObjectsInfo
+from std_srvs.srv import SetBool, Trigger
+from sdk.common import colors, plot_one_box
+from example.self_driving import lane_detect
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
+from ros_robot_controller_msgs.msg import BuzzerState, SetPWMServoState, PWMServoState
+
+class SelfDrivingNode(Node):
+    def __init__(self, name):
+        rclpy.init()
+        super().__init__(name, allow_undeclared_parameters=True, automatically_declare_parameters_from_overrides=True)
+        self.name = name
+        self.is_running = True
+        self.pid = pid.PID(0.4, 0.0, 0.05)
+        self.param_init()
+
+        self.fps = fps.FPS()  
+        self.image_queue = queue.Queue(maxsize=2)
+        self.classes = ['go', 'right', 'park', 'red', 'green', 'crosswalk']
+        self.display = True
+        self.bridge = CvBridge()
+        self.lock = threading.RLock()
+        self.colors = common.Colors()
+        # signal.signal(signal.SIGINT, self.shutdown)
+        self.machine_type = os.environ.get('MACHINE_TYPE')
+        self.lane_detect = lane_detect.LaneDetector("yellow")
+
+        self.mecanum_pub = self.create_publisher(Twist, '/controller/cmd_vel', 1)
+        self.servo_state_pub = self.create_publisher(SetPWMServoState, 'ros_robot_controller/pwm_servo/set_state', 1)
+        self.result_publisher = self.create_publisher(Image, '~/image_result', 1)
+
+        self.create_service(Trigger, '~/enter', self.enter_srv_callback) # enter the game
+        self.create_service(Trigger, '~/exit', self.exit_srv_callback) # exit the game
+        self.create_service(SetBool, '~/set_running', self.set_running_srv_callback)
+        # self.heart = Heart(self.name + '/heartbeat', 5, lambda _: self.exit_srv_callback(None))
+        timer_cb_group = ReentrantCallbackGroup()
+        self.client = self.create_client(Trigger, '/yolov5_ros2/init_finish')
+        self.client.wait_for_service()
+        self.start_yolov5_client = self.create_client(Trigger, '/yolov5/start', callback_group=timer_cb_group)
+        self.start_yolov5_client.wait_for_service()
+        self.stop_yolov5_client = self.create_client(Trigger, '/yolov5/stop', callback_group=timer_cb_group)
+        self.stop_yolov5_client.wait_for_service()
+
+        self.timer = self.create_timer(0.0, self.init_process, callback_group=timer_cb_group)
+
+    def init_process(self):
+        self.timer.cancel()
+
+        self.mecanum_pub.publish(Twist())
+        if not self.get_parameter('only_line_follow').value:
+            self.send_request(self.start_yolov5_client, Trigger.Request())
+        time.sleep(1)
+        
+        if 1:#self.get_parameter('start').value:
+            self.display = True
+            self.enter_srv_callback(Trigger.Request(), Trigger.Response())
+            request = SetBool.Request()
+            request.data = True
+            self.set_running_srv_callback(request, SetBool.Response())
+
+        #self.park_action() 
+        threading.Thread(target=self.main, daemon=True).start()
+        self.create_service(Trigger, '~/init_finish', self.get_node_state)
+        self.get_logger().info('\033[1;32m%s\033[0m' % 'start')
+
+    def param_init(self):
+        self.start = False
+        self.enter = False
+        self.right = True
+
+        self.have_turn_right = False
+        self.detect_turn_right = False
+        self.detect_far_lane = False
+        self.park_x = -1  # obtain the x-pixel coordinate of a parking sign
+
+        self.start_turn_time_stamp = 0
+        self.count_turn = 0
+        self.start_turn = False  # start to turn
+
+        self.count_right = 0
+        self.count_right_miss = 0
+        self.turn_right = False  # right turning sign
+
+        self.last_park_detect = False
+        self.count_park = 0
+        self.stop = False  # stopping sign
+        self.start_park = False  # start parking sign
+
+        self.count_crosswalk = 0
+        self.crosswalk_distance = 0  # distance to the zebra crossing
+        self.crosswalk_length = 0.1 + 0.3  # the length of zebra crossing and the robot
+
+        self.start_slow_down = False  # slowing down sign
+        self.normal_speed = 0.1  # normal driving speed
+        self.slow_down_speed = 0.1  # slowing down speed
+
+        self.traffic_signs_status = None  # record the state of the traffic lights
+        self.red_loss_count = 0
+
+        self.object_sub = None
+        self.image_sub = None
+        self.objects_info = []
+
+    def get_node_state(self, request, response):
+        response.success = True
+        return response
+
+    def send_request(self, client, msg):
+        future = client.call_async(msg)
+        while rclpy.ok():
+            if future.done() and future.result():
+                return future.result()
+
+    def enter_srv_callback(self, request, response):
+        self.get_logger().info('\033[1;32m%s\033[0m' % "self driving enter")
+        with self.lock:
+            self.start = False
+            camera = 'depth_cam'#self.get_parameter('depth_camera_name').value
+            self.create_subscription(Image, '/ascamera/camera_publisher/rgb0/image' , self.image_callback, 1)
+            self.create_subscription(ObjectsInfo, '/yolov5_ros2/object_detect', self.get_object_callback, 1)
+            self.mecanum_pub.publish(Twist())
+            self.enter = True
+        response.success = True
+        response.message = "enter"
+        return response
+
+    def exit_srv_callback(self, request, response):
+        self.get_logger().info('\033[1;32m%s\033[0m' % "self driving exit")
+        with self.lock:
+            try:
+                if self.image_sub is not None:
+                    self.image_sub.unregister()
+                if self.object_sub is not None:
+                    self.object_sub.unregister()
+            except Exception as e:
+                self.get_logger().info('\033[1;32m%s\033[0m' % str(e))
+            self.mecanum_pub.publish(Twist())
+        self.param_init()
+        response.success = True
+        response.message = "exit"
+        return response
+
+    def set_running_srv_callback(self, request, response):
+        self.get_logger().info('\033[1;32m%s\033[0m' % "set_running")
+        with self.lock:
+            self.start = request.data
+            if not self.start:
+                self.mecanum_pub.publish(Twist())
+        response.success = True
+        response.message = "set_running"
+        return response
+
+    def shutdown(self, signum, frame):  # press 'ctrl+c' to close the program
+        self.is_running = False
+
+    def image_callback(self, ros_image):  # callback target checking
+        cv_image = self.bridge.imgmsg_to_cv2(ros_image, "rgb8")
+        rgb_image = np.array(cv_image, dtype=np.uint8)
+        if self.image_queue.full():
+            # if the queue is full, remove the oldest image
+            self.image_queue.get()
+        # put the image into the queue
+        self.image_queue.put(rgb_image)
+    
+    # parking processing
+    def park_action(self):
+        if self.machine_type == 'MentorPi_Mecanum': 
+            twist = Twist()
+            twist.linear.y = -0.2
+            self.mecanum_pub.publish(twist)
+            time.sleep(0.38/0.2)
+        elif self.machine_type == 'MentorPi_Acker':
+            twist = Twist()
+            twist.linear.x = 0.15
+            twist.angular.z = twist.linear.x*math.tan(-0.5061)/0.145
+            self.mecanum_pub.publish(twist)
+            time.sleep(3)
+
+            twist = Twist()
+            twist.linear.x = 0.15
+            twist.angular.z = -twist.linear.x*math.tan(-0.5061)/0.145
+            self.mecanum_pub.publish(twist)
+            time.sleep(2)
+
+            twist = Twist()
+            twist.linear.x = -0.15
+            twist.angular.z = twist.linear.x*math.tan(-0.5061)/0.145
+            self.mecanum_pub.publish(twist)
+            time.sleep(1.5)
+
+        else:
+            twist = Twist()
+            twist.angular.z = -1
+            self.mecanum_pub.publish(twist)
+            time.sleep(1.5)
+            self.mecanum_pub.publish(Twist())
+            twist = Twist()
+            twist.linear.x = 0.2
+            self.mecanum_pub.publish(twist)
+            time.sleep(0.65/0.2)
+            self.mecanum_pub.publish(Twist())
+            twist = Twist()
+            twist.angular.z = 1
+            self.mecanum_pub.publish(twist)
+            time.sleep(1.5)
+        self.mecanum_pub.publish(Twist())
+
+    def main(self):
+        while self.is_running:
+            time_start = time.time()
+            try:
+                image = self.image_queue.get(block=True, timeout=1)
+            except queue.Empty:
+                if not self.is_running:
+                    break
+                else:
+                    continue
+
+            result_image = image.copy()
+            if self.start:
+                h, w = image.shape[:2]
+
+                # obtain the binary image of the lane
+                binary_image = self.lane_detect.get_binary(image)
+
+                twist = Twist()
+
+                
+                self.get_logger().info('\033[1;33m%s\033[0m' % self.crosswalk_distance)
+                if 70 < self.crosswalk_distance and not self.start_slow_down:  # The robot starts to slow down only when it is close enough to the zebra crossing
+                    self.count_crosswalk += 1
+                    if self.count_crosswalk == 3:  # judge multiple times to prevent false detection
+                        self.count_crosswalk = 0
+                        self.start_slow_down = True  # sign for slowing down
+                        self.count_slow_down = time.time()  # fixing time for slowing down
+                else:  # need to detect continuously, otherwise reset
+                    self.count_crosswalk = 0
+
+                # deceleration processing
+                if self.start_slow_down:
+                    if self.traffic_signs_status is not None:
+                        area = abs(self.traffic_signs_status.box[0] - self.traffic_signs_status.box[2]) * abs(self.traffic_signs_status.box[1] - self.traffic_signs_status.box[3])
+                        if self.traffic_signs_status.class_name == 'red' and area < 1000:  # If the robot detects a red traffic light, it will stop
+                            self.mecanum_pub.publish(Twist())
+                            self.stop = True
+                        elif self.traffic_signs_status.class_name == 'green':  # If the traffic light is green, the robot will slow down and pass through
+                            self.stop = False
+                    if not self.stop:  # In other cases where the robot is not stopped, slow down the speed and calculate the time needed to pass through the crosswalk. The time needed is equal to the length of the crosswalk divided by the driving speed
+                        twist.linear.x = self.slow_down_speed
+                        if time.time() - self.count_slow_down > self.crosswalk_length / twist.linear.x:
+                            self.start_slow_down = False
+                else:
+                    twist.linear.x = self.normal_speed  # go straight with normal speed
+
+                # If the robot detects a stop sign and a crosswalk, it will slow down to ensure stable recognition
+                if 0 < self.park_x and 135 < self.crosswalk_distance:
+                    twist.linear.x = self.slow_down_speed
+                    if not self.start_park and 180 < self.crosswalk_distance:  # When the robot is close enough to the crosswalk, it will start parking
+                        self.count_park += 1 
+                        if self.count_park >= 15:  
+                            self.mecanum_pub.publish(Twist())  # 停止移动
+                            self.start_park = True
+                            self.stop = True
+                            threading.Thread(target=self.park_action).start()
+                    else:
+                        self.count_park = 0  
+
+                # line following processing
+                result_image, lane_angle, lane_x = self.lane_detect(binary_image, image.copy())  
+                if lane_x >= 0 and not self.stop:  # 如果检测到车道线，并且车辆没有停止
+                    if lane_x > 150:  # 如果线偏离车道中心，进入转弯处理
+                        self.count_turn += 1
+                        if self.count_turn > 5 and not self.start_turn:
+                            self.start_turn = True
+                            self.count_turn = 0
+                            self.start_turn_time_stamp = time.time()
+                        if self.machine_type != 'MentorPi_Acker':
+                            twist.angular.z = -0.45  # turning speed
+                        else:
+                            twist.angular.z = twist.linear.x * math.tan(-0.5061) / 0.145
+                    else:  # use PID algorithm to correct turns on a straight road
+                        self.count_turn = 0
+                        if time.time() - self.start_turn_time_stamp > 2 and self.start_turn:
+                            self.start_turn = False
+                        if not self.start_turn:
+                            self.pid.SetPoint = 130  # the coordinate of the line while the robot is in the middle of the lane
+                            self.pid.update(lane_x)
+                            if self.machine_type != 'MentorPi_Acker':
+                                twist.angular.z = common.set_range(self.pid.output, -0.1, 0.1)
+                            else:
+                                twist.angular.z = twist.linear.x * math.tan(common.set_range(self.pid.output, -0.1, 0.1)) / 0.145
+                        else:
+                            if self.machine_type == 'MentorPi_Acker':
+                                twist.angular.z = 0.15 * math.tan(-0.5061) / 0.145
+                    self.mecanum_pub.publish(twist)  
+                else:
+                    self.pid.clear()
+
+                When drawing the recognized object, the drawn box may deviate from the actual position due to the slower speed of object detection compared to line detection
+                if self.objects_info:
+                    for i in self.objects_info:
+                        box = i.box
+                        class_name = i.class_name
+                        cls_conf = i.score
+                        cls_id = self.classes.index(class_name)
+                        color = colors(cls_id, True)
+                        plot_one_box(
+                            box,
+                            result_image,
+                            color=color,
+                            label="{}:{:.2f}".format(class_name, cls_conf),
+                        )
+
+            else:
+                time.sleep(0.01)
+
+            
+            bgr_image = cv2.cvtColor(result_image, cv2.COLOR_RGB2BGR)
+            if self.display:
+                self.fps.update()
+                bgr_image = self.fps.show_fps(bgr_image)
+
+           
+            self.result_publisher.publish(self.bridge.cv2_to_imgmsg(bgr_image, "bgr8"))
+
+            
+            time_d = 0.03 - (time.time() - time_start)
+            if time_d > 0:
+                time.sleep(time_d)
+        self.mecanum_pub.publish(Twist())
+        rclpy.shutdown()
+
+
+    # Obtain the target detection result
+    def get_object_callback(self, msg):
+        self.objects_info = msg.objects
+        if self.objects_info == []:  # If it is not recognized, reset the variable
+            self.traffic_signs_status = None
+            self.crosswalk_distance = 0
+        else:
+            min_distance = 0
+            for i in self.objects_info:
+                class_name = i.class_name
+                center = (int((i.box[0] + i.box[2])/2), int((i.box[1] + i.box[3])/2))
+                
+                if class_name == 'crosswalk':  
+                    if center[1] > min_distance:  # Obtain recent y-axis pixel coordinate of the crosswalk
+                        min_distance = center[1]
+                elif class_name == 'right':  # obtain the right turning sign
+                    self.count_right += 1
+                    self.count_right_miss = 0
+                    if self.count_right >= 5:  # If it is detected multiple times, take the right turning sign to true
+                        self.turn_right = True
+                        self.count_right = 0
+                elif class_name == 'park':  # obtain the center coordinate of the parking sign
+                    self.park_x = center[0]
+                elif class_name == 'red' or class_name == 'green':  # obtain the center coordinate of the parking sign
+                    self.traffic_signs_status = i
+               
+
+            self.get_logger().info('\033[1;32m%s\033[0m' % class_name)
+            self.crosswalk_distance = min_distance
+
+def main():
+    node = SelfDrivingNode('self_driving')
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+    executor.spin()
+    node.destroy_node()
+ 
+if __name__ == "__main__":
+    main()
+
+    
+### ENDFILE: /home/pi/docker/src/self_driving.py
+### FILE: /home/pi/docker/src/copy.sh
+#!/bin/zsh
+sleep 5
+cp ~/share/src/config.yaml ~/armpi_fpv/src/armpi_fpv_bringup/config/config.yaml
+cp ~/share/src/in.py ~/armpi_fpv/src/warehouse/scripts/in.py
+cp ~/share/src/out.py ~/armpi_fpv/src/warehouse/scripts/out.py
+cp ~/share/src/exchange.py ~/armpi_fpv/src/warehouse/scripts/exchange.py
+cp ~/share/src/pallezting.py ~/armpi_fpv/src/object_pallezting/scripts/pallezting.py
+cp ~/share/src/sorting.py ~/armpi_fpv/src/object_sorting/scripts/sorting.py
+source /home/ubuntu/armpi_fpv/src/armpi_fpv_bringup/scripts/source_env.bash roslaunch armpi_fpv_bringup bringup.launch
+### ENDFILE: /home/pi/docker/src/copy.sh
+### FILE: /home/pi/docker/src/apply.sh
+#!/bin/bash
+xhost +
+docker exec -u ubuntu -w /home/ubuntu armpi_fpv /bin/zsh -c "~/.stop_ros.sh&~/share/src/copy.sh"
+### ENDFILE: /home/pi/docker/src/apply.sh
+### FILE: /home/pi/docker/src/lane_detect.py
+#!/usr/bin/env python3
+# encoding: utf-8
+# @data:2023/03/11
+# @author:aiden
+# lane detection for autonomous driving
+import os
+import cv2
+import math
+import queue
+import threading
+import numpy as np
+import sdk.common as common
+from cv_bridge import CvBridge
+
+bridge = CvBridge()
+
+lab_data = common.get_yaml_data("/home/ubuntu/software/lab_tool/lab_config.yaml")
+
+class LaneDetector(object):
+    def __init__(self, color):
+        # lane color
+        self.target_color = color
+        # ROI for lane detection
+        if os.environ['DEPTH_CAMERA_TYPE'] == 'ascamera':
+            self.rois = ((338, 360, 0, 320, 0.7), (292, 315, 0, 320, 0.2), (248, 270, 0, 320, 0.1))
+        else:
+            self.rois = ((450, 480, 0, 320, 0.7), (390, 480, 0, 320, 0.2), (330, 480, 0, 320, 0.1))
+        self.weight_sum = 1.0
+
+    def set_roi(self, roi):
+        self.rois = roi
+
+    @staticmethod
+    def get_area_max_contour(contours, threshold=100):
+        '''
+        obtain the contour corresponding to the maximum area
+        :param contours:
+        :param threshold:
+        :return:
+        '''
+        contour_area = zip(contours, tuple(map(lambda c: math.fabs(cv2.contourArea(c)), contours)))
+        contour_area = tuple(filter(lambda c_a: c_a[1] > threshold, contour_area))
+        if len(contour_area) > 0:
+            max_c_a = max(contour_area, key=lambda c_a: c_a[1])
+            return max_c_a
+        return None
+    
+    def add_horizontal_line(self, image):
+        #   |____  --->   |————   ---> ——
+        h, w = image.shape[:2]
+        roi_w_min = int(w/2)
+        roi_w_max = w
+        roi_h_min = 0
+        roi_h_max = h
+        roi = image[roi_h_min:roi_h_max, roi_w_min:roi_w_max]  # crop the right half
+        flip_binary = cv2.flip(roi, 0)  # flip upside down
+        max_y = cv2.minMaxLoc(flip_binary)[-1][1]  # extract the coordinates of the top-left point with a value of 255
+
+        return h - max_y
+
+    def add_vertical_line_far(self, image):
+        h, w = image.shape[:2]
+        roi_w_min = int(w/8)
+        roi_w_max = int(w/2)
+        roi_h_min = 0
+        roi_h_max = h
+        roi = image[roi_h_min:roi_h_max, roi_w_min:roi_w_max]
+        flip_binary = cv2.flip(roi, -1)  # flip the image horizontally and vertically
+        #cv2.imshow('1', flip_binary)
+        # min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(ret)
+        # minVal：the minimum value
+        # maxVal：the maximum value
+        # minLoc：the location of the minimum value
+        # maxLoc：the location of the maximum value
+        # the order of traversal is: first rows, then columns, with rows from left to right and columns from top to bottom
+        (x_0, y_0) = cv2.minMaxLoc(flip_binary)[-1]  # extract the coordinates of the top-left point with a value of 255
+        y_center = y_0 + 55
+        roi = flip_binary[y_center:, :]
+        (x_1, y_1) = cv2.minMaxLoc(roi)[-1]
+        down_p = (roi_w_max - x_1, roi_h_max - (y_1 + y_center))
+        
+        y_center = y_0 + 65
+        roi = flip_binary[y_center:, :]
+        (x_2, y_2) = cv2.minMaxLoc(roi)[-1]
+        up_p = (roi_w_max - x_2, roi_h_max - (y_2 + y_center))
+
+        up_point = (0, 0)
+        down_point = (0, 0)
+        if up_p[1] - down_p[1] != 0 and up_p[0] - down_p[0] != 0:
+            up_point = (int(-down_p[1]/((up_p[1] - down_p[1])/(up_p[0] - down_p[0])) + down_p[0]), 0)
+            down_point = (int((h - down_p[1])/((up_p[1] - down_p[1])/(up_p[0] - down_p[0])) + down_p[0]), h)
+
+        return up_point, down_point
+
+    def add_vertical_line_near(self, image):
+        # ——|         |——        |
+        #   |   --->  |     --->
+        h, w = image.shape[:2]
+        roi_w_min = 0
+        roi_w_max = int(w/2)
+        roi_h_min = int(h/2)
+        roi_h_max = h
+        roi = image[roi_h_min:roi_h_max, roi_w_min:roi_w_max]
+        flip_binary = cv2.flip(roi, -1)  # flip the image horizontally and vertically
+        #cv2.imshow('1', flip_binary)
+        (x_0, y_0) = cv2.minMaxLoc(flip_binary)[-1]  # extract the coordinates of the top-left point with a value of 255
+        down_p = (roi_w_max - x_0, roi_h_max - y_0)
+
+        (x_1, y_1) = cv2.minMaxLoc(roi)[-1]
+        y_center = int((roi_h_max - roi_h_min - y_1 + y_0)/2)
+        roi = flip_binary[y_center:, :] 
+        (x, y) = cv2.minMaxLoc(roi)[-1]
+        up_p = (roi_w_max - x, roi_h_max - (y + y_center))
+
+        up_point = (0, 0)
+        down_point = (0, 0)
+        if up_p[1] - down_p[1] != 0 and up_p[0] - down_p[0] != 0:
+            up_point = (int(-down_p[1]/((up_p[1] - down_p[1])/(up_p[0] - down_p[0])) + down_p[0]), 0)
+            down_point = down_p
+
+        return up_point, down_point, y_center
+
+    def get_binary(self, image):
+        # recognize color through LAB space
+        img_lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)  # convert RGB to LAB
+        img_blur = cv2.GaussianBlur(img_lab, (3, 3), 3)  # Gaussian blur denoising
+        mask = cv2.inRange(img_blur, tuple(lab_data['lab']['Stereo'][self.target_color]['min']), tuple(lab_data['lab']['Stereo'][self.target_color]['max']))  # 二值化
+        eroded = cv2.erode(mask, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))  # erode
+        dilated = cv2.dilate(eroded, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))  # dilate
+
+        return dilated
+
+    def __call__(self, image, result_image):
+        # extract the center point based on the proportion
+        centroid_sum = 0
+        h, w = image.shape[:2]
+        max_center_x = -1
+        center_x = []
+        for roi in self.rois:
+            blob = image[roi[0]:roi[1], roi[2]:roi[3]]  # crop ROI
+            contours = cv2.findContours(blob, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)[-2]  # find contours
+            max_contour_area = self.get_area_max_contour(contours, 30)  # obtain the contour with the largest area
+            if max_contour_area is not None:
+                rect = cv2.minAreaRect(max_contour_area[0])  # the minimum bounding rectangle
+                box = np.intp(cv2.boxPoints(rect))  # four corners
+                for j in range(4):
+                    box[j, 1] = box[j, 1] + roi[0]
+                cv2.drawContours(result_image, [box], -1, (255, 255, 0), 2)  # draw the rectangle composed of the four points
+
+                # obtain the diagonal points of the rectangle
+                pt1_x, pt1_y = box[0, 0], box[0, 1]
+                pt3_x, pt3_y = box[2, 0], box[2, 1]
+                # the center point of the line
+                line_center_x, line_center_y = (pt1_x + pt3_x) / 2, (pt1_y + pt3_y) / 2
+
+                cv2.circle(result_image, (int(line_center_x), int(line_center_y)), 5, (0, 0, 255), -1)  # draw the center point
+                center_x.append(line_center_x)
+            else:
+                center_x.append(-1)
+        for i in range(len(center_x)):
+            if center_x[i] != -1:
+                if center_x[i] > max_center_x:
+                    max_center_x = center_x[i]
+                centroid_sum += center_x[i] * self.rois[i][-1]
+        if centroid_sum == 0:
+            return result_image, None, max_center_x
+        center_pos = centroid_sum / self.weight_sum  # calculate the center point based on the proportion
+        angle = math.degrees(-math.atan((center_pos - (w / 2.0)) / (h / 2.0)))
+        
+        return result_image, angle, max_center_x
+
+image_queue = queue.Queue(2)
+def image_callback(ros_image):
+    cv_image = bridge.imgmsg_to_cv2(ros_image, "bgr8")
+    bgr_image = np.array(cv_image, dtype=np.uint8)
+    if image_queue.full():
+        # if the queue is full, remove the oldest image
+        image_queue.get()
+        # put the image into the queue
+    image_queue.put(bgr_image)
+
+def main():
+    running = True
+    # self.get_logger().info('\033[1;32m%s\033[0m' % (*tuple(lab_data['lab']['Stereo'][self.target_color]['min']), tuple(lab_data['lab']['Stereo'][self.target_color]['max'])))
+
+    while running:
+        try:
+            image = image_queue.get(block=True, timeout=1)
+        except queue.Empty:
+            if not running:
+                break
+            else:
+                continue
+        binary_image = lane_detect.get_binary(image)
+        cv2.imshow('binary', binary_image)
+        img = image.copy()
+        y = lane_detect.add_horizontal_line(binary_image)
+        roi = [(0, y), (640, y), (640, 0), (0, 0)]
+        cv2.fillPoly(binary_image, [np.array(roi)], [0, 0, 0])  # fill the top with black to avoid interference
+        min_x = cv2.minMaxLoc(binary_image)[-1][0]
+        cv2.line(img, (min_x, y), (640, y), (255, 255, 255), 50)  # draw a virtual line to guide the turning
+        result_image, angle, x = lane_detect(binary_image, image.copy()) 
+        '''
+        up, down = lane_detect.add_vertical_line_far(binary_image)
+        #up, down, center = lane_detect.add_vertical_line_near(binary_image)
+        cv2.line(img, up, down, (255, 255, 255), 10)
+        '''
+        cv2.imshow('image', img)
+        key = cv2.waitKey(1)
+        if key == ord('q') or key == 27:  # press Q or Esc to quit
+            break
+
+    cv2.destroyAllWindows()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    import rclpy
+    from sensor_msgs.msg import Image
+    rclpy.init()
+    node = rclpy.create_node('lane_detect')
+    lane_detect = LaneDetector('yellow')
+    node.create_subscription(Image, '/ascamera/camera_publisher/rgb0/image', image_callback, 1)
+    threading.Thread(target=main, daemon=True).start()
+    rclpy.spin(node)
+
+
+
+
+### ENDFILE: /home/pi/docker/src/lane_detect.py
+### FILE: /home/pi/docker/src/sorting.py
+#!/usr/bin/python3
+# coding=utf8
+# Date:2024/02/05
+# Author:Aiden
+# 第13章 ArmPi FPV创意玩法课程\1.AI视觉创意玩法\第4课 物品分拣
+import cv2
+import math
+import queue
+import rospy
+import signal
+import threading
+import numpy as np
+from threading import Timer
+
+from sensor_msgs.msg import Image
+from std_srvs.srv import Trigger, SetBool, SetBoolResponse
+
+from warehouse.msg import Grasp
+from object_sorting.srv import SetTarget
+from hiwonder_servo_msgs.msg import MultiRawIdPosDur
+from ros_robot_controller.msg import RGBState, RGBsState, BuzzerState 
+
+from armpi_fpv_common import pid, misc, common, apriltag
+from hiwonder_servo_controllers import bus_servo_control
+from armpi_fpv_kinematics.kinematics_control import set_pose_target
+
+# 分捡
+# 如未声明，使用的长度，距离单位均为m
+d_tag_map = 0
+
+tag_z_min = 0.01
+tag_z_max = 0.015
+
+d_color_map = 30
+
+color_z_min = 0.01
+color_z_max = 0.015
+d_color_y = 20
+color_y_adjust = 400
+
+center_x = 320
+
+running = False
+
+lock = threading.RLock()
+mask1 = cv2.imread('/home/ubuntu/armpi_fpv/src/object_sorting/scripts/mask1.jpg', 0)
+mask2 = cv2.imread('/home/ubuntu/armpi_fpv/src/object_sorting/scripts/mask2.jpg', 0)
+rows, cols = mask1.shape
+
+# 初始位置
+def initMove(delay=True):
+    with lock:
+        bus_servo_control.set_servos(joints_pub, 1.5, ((1, 200), (2, 500), (3, 80), (4, 825), (5, 625), (6, 500)))
+    if delay:
+        rospy.sleep(2) 
+ 
+def set_rgb(r, g, b):
+    rgb1 = RGBState()
+    rgb1.id = 1
+    rgb1.r = r
+    rgb1.g = g
+    rgb1.b = b
+    rgb2 = RGBState()
+    rgb2.id = 2
+    rgb2.r = r
+    rgb2.g = g
+    rgb2.b = b
+    msg = RGBsState()
+    msg.data = [rgb1, rgb2]
+    rgb_pub.publish(msg)
+ 
+x_dis = 500
+Y_DIS = 0
+y_dis = Y_DIS
+last_x_dis = x_dis
+last_x_dis = y_dis
+x_pid = pid.PID(P=0.01, I=0.001, D=0)#pid初始化
+y_pid = pid.PID(P=0.000008, I=0, D=0)
+
+tag_x_dis = 500
+tag_y_dis = 0
+tag_x_pid = pid.PID(P=0.02, I=0.001, D=0)#pid初始化
+tag_y_pid = pid.PID(P=0.02, I=0, D=0)
+
+stop_state = 0
+move_state = 1
+adjust = False
+approach = False
+rotation_angle = 0
+start_move = False
+adjust_error = False
+last_X, last_Y = 0, 0
+box_rotation_angle = 0
+last_box_rotation_angle = 0
+tag1 = ['tag1', -1, -1, -1, 0]
+tag2 = ['tag2', -1, -1, -1, 0]
+tag3 = ['tag3', -1, -1, -1, 0]
+current_tag = ['tag1', 'tag2', 'tag3']
+detect_color = ('red', 'green', 'blue')
+
+count = 0
+count2 = 0
+count3 = 0
+count_d = 0
+count_timeout = 0
+count_tag_timeout = 0
+count_adjust_timeout = 0
+# 变量重置
+def reset():
+    global X, Y
+    global adjust    
+    global approach
+    global move_state
+    global start_move
+    global current_tag
+    global detect_color
+    global x_dis, y_dis
+    global adjust_error
+    global last_X, last_Y
+    global tag1, tag2, tag3
+    global box_rotation_angle
+    global tag_x_dis, tag_y_dis
+    global last_x_dis, last_y_dis
+    global rotation_angle, last_box_rotation_angle    
+    global count, count2, count3, count_timeout, count_adjust_timeout, count_d, count_tag_timeout
+    
+    with lock:
+        X = 0
+        Y = 0
+        
+        x_dis = 500
+        y_dis = Y_DIS
+        tag_x_dis = 500
+        tag_y_dis = 0    
+        x_pid.clear()
+        y_pid.clear()
+        tag_x_pid.clear()
+        tag_y_pid.clear()
+        last_x_dis = x_dis
+        last_y_dis = y_dis
+        
+        adjust = False
+        approach = False
+        start_move = False
+        adjust_error = False
+        
+        move_state = 1
+        set_rgb(0, 0, 0)
+        rotation_angle = 0
+        box_rotation_angle = 0
+        last_box_rotation_angle = 0
+
+        count = 0
+        count2 = 0
+        count3 = 0
+        count_d = 0
+        count_timeout = 0
+        count_tag_timeout = 0
+        count_adjust_timeout = 0
+
+        tag1 = ['tag1', -1, -1, -1, 0]
+        tag2 = ['tag2', -1, -1, -1, 0]
+        tag3 = ['tag3', -1, -1, -1, 0]
+        current_tag = ['tag1', 'tag2', 'tag3']
+        detect_color = ('red', 'green', 'blue')
+
+color_range = None
+def load_lab_config():
+    global color_range
+    
+    # 获取lab参数
+    color_range = rospy.get_param('/lab_config_manager/color_range_list', {})  # get lab range from ros param server
+
+def load_config():
+    global config
+    global d_tag_map
+    global tag_z_min
+    global tag_z_max
+    global d_color_map
+    global color_z_min
+    global color_z_max
+    global d_color_y
+    global color_y_adjust
+    global center_x
+    
+    
+    config = rospy.get_param('config', {})
+    if config != {}:        
+        d_tag_map = config['d_tag_map']
+
+        tag_z_min = config['tag_z_min']
+        tag_z_max = config['tag_z_max']
+
+        d_color_map = config['d_color_map']
+
+        color_z_min = config['color_z_min']
+        color_z_max = config['color_z_max']
+        d_color_y = config['d_color_y']
+        color_y_adjust = config['color_y_adjust']
+
+        center_x = config['center_x']
+
+# app初始化调用
+def init():
+    global stop_state
+    global target_data
+
+    rospy.loginfo("object sorting Init")
+    load_lab_config()
+    load_config()
+    stop_state = 0
+    target_data = ((), ())
+    initMove()
+    reset()
+
+y_d = 0
+roll_angle = 0
+gripper_rotation = 0
+# 木块对角长度一半
+square_diagonal = 0.03*math.sin(math.pi/4)
+F = 1000/240.0
+# 夹取
+def pick(grasps, have_adjust=False):
+    global roll_angle, last_x_dis
+    global adjust, x_dis, y_dis, tag_x_dis, tag_y_dis, adjust_error, gripper_rotation
+    
+    position = grasps.grasp_pos.position
+    rotation = grasps.grasp_pos.rotation
+    approach = grasps.grasp_approach
+    retreat = grasps.grasp_retreat
+     
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+    
+    if not running:
+        return False 
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        if not have_adjust:
+            servo_data = target1[1]
+            bus_servo_control.set_servos(joints_pub, 1.8, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+            rospy.sleep(2)
+            if not running:
+                return False
+            
+            # 第三步：移到目标点
+            target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+            servo_data = target2[1]
+            bus_servo_control.set_servos(joints_pub, 1.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+            rospy.sleep(2)
+            if not running:
+                target4 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+                rospy.sleep(1)
+                return False
+            
+            roll_angle = target2[3][1]
+            gripper_rotation = box_rotation_angle
+
+            x_dis = tag_x_dis = last_x_dis = 1000 - target2[1][0]
+            y_dis = tag_y_dis =0
+            
+            if state == 'color':
+                # 第四步：微调整位置
+                if not adjust:
+                    adjust = True
+                    return True
+            else:
+                return True
+        else:
+            # 第五步: 对齐
+            bus_servo_control.set_servos(joints_pub, 0.5, ((2, 500 + int(F*gripper_rotation)), ))
+            rospy.sleep(0.5)
+            if not running:
+                target4 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+                rospy.sleep(1)             
+                return False
+            
+            # 第六步：夹取
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.grasp_posture - 80), ))
+            rospy.sleep(0.6)
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.grasp_posture), ))
+            rospy.sleep(0.8)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))
+                target4 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+                rospy.sleep(0.5)            
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+                rospy.sleep(1)             
+                return False
+            
+            # 第七步：抬升物体
+            if grasps.up != 0:
+                target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+                servo_data = target3[1]
+                bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+                rospy.sleep(0.6)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))
+                target4 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+                rospy.sleep(0.5)            
+                servo_data = target4[1]
+                bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+                rospy.sleep(1)             
+                return False
+            
+            # 第八步：移到撤离点
+            target4 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            if servo_data != target3[1]:    
+                bus_servo_control.set_servos(joints_pub, 1, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1])))
+                rospy.sleep(1)
+                if not running:
+                    bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))
+                    rospy.sleep(0.5)                
+                    return False
+                
+            # 第九步：移到稳定点
+            bus_servo_control.set_servos(joints_pub, 1.5, ((2, 500), (3, 80), (4, 825), (5, 625)))
+            rospy.sleep(1.5)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))
+                rospy.sleep(0.5)            
+                return False
+            
+            return target2[3][1]
+    else:
+        rospy.loginfo('pick failed')
+        return False
+
+def place(places):
+    position = places.grasp_pos.position
+    rotation = places.grasp_pos.rotation
+    approach = places.grasp_approach
+    retreat = places.grasp_retreat
+    
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+    
+    if not running:
+        return False
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        # 第一步：云台转到朝向目标方向
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 1, ((1, places.pre_grasp_posture), (2, int(F*rotation.y)), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(1)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))
+            rospy.sleep(0.5)            
+            return False
+        
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        # 第二步：移到接近点
+        bus_servo_control.set_servos(joints_pub, 1.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+        rospy.sleep(1.6)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))
+            rospy.sleep(0.5)             
+            return False
+        
+        # 第三步：移到目标点
+        target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+        servo_data = target2[1]
+        bus_servo_control.set_servos(joints_pub, 1, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+        rospy.sleep(1)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            rospy.sleep(0.5)             
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(1)              
+            return False
+        
+        # 第四步：抬升
+        if places.up != 0:
+            target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+            servo_data = target3[1]
+            bus_servo_control.set_servos(joints_pub, 0.8, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.8)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            rospy.sleep(0.5)             
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(1)              
+            return False
+
+        # 第五步：放置
+### ENDFILE: /home/pi/docker/src/sorting.py
+### FILE: /home/pi/docker/src/config.yaml
+config:
+  d_tag_map: -55
+  tag_z_min: 0.01
+  tag_z_max: 0.015
+  d_color_map: 5
+  color_z_min: 0.01
+  color_z_max: 0.015
+  d_color_y: 20
+  color_y_adjust: 430
+  center_x: 300
+
+#d_tag_map:  #如果标签夹取时前后位置不准，可调节此参数，调节间隔5，偏前+5，偏后-5
+#tag_z_min:  ##如果标签夹取时较近的地方上下不准，可调节此参数，调节间隔0.005
+#tag_z_max:  #如果标签夹取时较远的地方上下不准，可调节此参数，调节间隔0.005
+#d_color_map:  #如果颜色夹取时刚下去时的位置不准，可调节此参数，调节时间隔5来调整，偏前+5，偏后-5
+#color_z_min:  #如果颜色夹取时较近的地方上下不准，可调节此参数，调节时间隔0.005来调整
+#color_z_max:  #如果颜色夹取时较远的地方上下不准，可调节此参数，调节时间隔0.005来调整
+#d_color_y:  #如果颜色夹取时前后对不准，可调节此参数，调节间隔5，偏前+5，偏后-5
+#color_y_adjust:  #如果颜色夹取时前后对不准，可调节此参数，调节间隔5，偏前+5，偏后-5
+#center_x:  #如果夹取时左右对不准，可调节此参数，调节间隔5，偏左+5，偏右-5
+### ENDFILE: /home/pi/docker/src/config.yaml
+### FILE: /home/pi/docker/src/exchange.py
+#!/usr/bin/python3
+# coding=utf8
+# Date:2024/02/05
+# Author:Aiden
+# 第13章 ArmPi FPV创意玩法课程\2.智慧仓储课程\第5课 智能转仓
+import cv2
+import rospy
+import threading
+import numpy as np
+from threading import Timer
+
+from sensor_msgs.msg import Image
+from std_srvs.srv import Trigger, SetBool, SetBoolResponse
+
+from warehouse.msg import Grasp
+from warehouse.srv import SetExchangeTarget
+from ros_robot_controller.msg import BuzzerState
+from hiwonder_servo_msgs.msg import MultiRawIdPosDur, JointState
+
+from armpi_fpv_common import common
+from hiwonder_servo_controllers import bus_servo_control
+from armpi_fpv_kinematics.kinematics_control import set_pose_target
+
+# 转仓
+# 如未声明，使用的长度，距离单位均为m
+
+# 初始化
+target_data = ()
+running = False
+registered = False
+lock = threading.RLock()
+
+# 初始位置
+def initMove():
+    with lock:
+        bus_servo_control.set_servos(joints_pub, 1.5, ((1, 200), (2, 500), (3, 80), (4, 825), (5, 625), (6, 500)))
+    rospy.sleep(2)
+
+# 变量重置
+def reset():
+    global target_data
+    
+    target_data = ()   
+
+# app初始化调用
+def init():
+    rospy.loginfo("exchange Init")
+    initMove()
+    reset()
+
+def pick(grasps):
+    position = grasps.grasp_pos.position
+    rotation = grasps.grasp_pos.rotation
+    approach = grasps.grasp_approach
+    retreat = grasps.grasp_retreat
+    
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+
+    if not running:
+        return False 
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        # 第一步：云台转到朝向目标方向，夹持器打开
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.8, ((1, grasps.pre_grasp_posture), (2, 500), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(0.8)
+        if not running:
+            return False
+        
+        # 第二步：移到接近点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+        rospy.sleep(0.5)
+        if not running:
+            return False
+        
+        # 第三步：移到目标点
+        target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+        servo_data = target2[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+        rospy.sleep(1)
+        if not running:
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(1)            
+            return False
+        
+        # 第四步：夹取
+        bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.grasp_posture), ))
+        rospy.sleep(1)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))
+            rospy.sleep(0.5)
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(1)             
+            return False
+        
+        # 第五步：抬升
+        target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+        servo_data = target3[1]
+        if grasps.up != 0:
+            bus_servo_control.set_servos(joints_pub, 0.4, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))
+            rospy.sleep(0.5)
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(1)              
+            return False
+        
+        # 第六步：移到撤离点
+        target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+        servo_data = target4[1]
+        if servo_data != target3[1]:            
+            bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.5)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))
+                rospy.sleep(0.5)                 
+                return False
+            
+        # 第七步：移到稳定点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((2, 500), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(0.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))
+            rospy.sleep(0.5)             
+            return False
+        
+        return True
+    else:
+        rospy.loginfo('pick failed')
+        return False
+
+def place(places):
+    position = places.grasp_pos.position
+    rotation = places.grasp_pos.rotation
+    approach = places.grasp_approach
+    retreat = places.grasp_retreat
+    
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+
+    if not running:
+        return False
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        # 第一步：云台转到朝向目标方向
+        servo_data = target1[1]
+        if target_data[0][0] != target_data[1][0]:
+            bus_servo_control.set_servos(joints_pub, 2, ((1, places.pre_grasp_posture), (2, 500), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+            rospy.sleep(2)
+        rospy.sleep(0.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)            
+            return False
+        
+        # 第二步：移到接近点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))    
+        rospy.sleep(0.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)            
+            return False
+        
+        # 第三步：移到目标点
+        target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+        servo_data = target2[1]
+        if servo_data != target1[1]:        
+            bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(1)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)              
+            return False
+        
+        # 第四步：放置
+        bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))         
+        rospy.sleep(1)
+        if not running:
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)              
+            return False
+        
+        # 第五步：抬升
+        target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+        servo_data = target3[1]
+        if places.up != 0:
+            bus_servo_control.set_servos(joints_pub, 0.4, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.5)
+        if not running:
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)              
+            return False
+        
+        # 第六步：移到撤离点
+        target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+        servo_data = target4[1]
+        if servo_data != target3[1]:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.5)
+            if not running:
+                return False
+            
+        # 第七步：移到稳定点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((2, 500), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(0.5)
+        if not running:
+            return False
+        
+        return True
+    else:
+        rospy.loginfo('place failed')
+        return False
+
+##########################################
+## 货架每层位置x, y, z(m)
+shelf_position = {'R1':[-0.277,  0, 0.02],
+                  'R2':[-0.277,  0, 0.12],
+                  'R3':[-0.277,  0, 0.21],
+                  'L1':[0.277, 0, 0.02],
+                  'L2':[0.277, 0, 0.12],
+                  'L3':[0.277, 0, 0.21]}
+##########################################
+
+# 每层放置时的俯仰角
+roll_dict = {'R1': 50,
+             'R2': 60,
+             'R3': 90,
+             'L1': 50,
+             'L2': 60,
+             'L3': 90}
+
+def move():
+    global target_data
+    
+    while True:
+        if running:
+            try:
+                if len(target_data) == 2:                                    
+                    move_out = target_data[0]
+                    if shelf_position[move_out][0] > 0:
+                        approach_x = -0.07
+                    else:
+                        approach_x = 0.07
+                    grasps = Grasp()                    
+                    grasps.grasp_pos.position.x = shelf_position[move_out][0]
+                    grasps.grasp_pos.position.y = shelf_position[move_out][1]
+                    grasps.grasp_pos.position.z = shelf_position[move_out][2]
+                    grasps.grasp_pos.rotation.r = roll_dict[move_out]
+                    grasps.up = 0
+                    grasps.grasp_approach.x = approach_x
+                    grasps.grasp_retreat.x = approach_x
+                    grasps.grasp_retreat.z = 0.02
+                    grasps.grasp_posture = 570
+                    grasps.pre_grasp_posture = 200 
+                    msg = BuzzerState()
+                    msg.freq = 1900
+                    msg.on_time = 0.1
+                    msg.off_time = 0.9
+                    msg.repeat = 1
+                    buzzer_pub.publish(msg)
+                    result = pick(grasps)                          
+                    if result:
+                        move_in = target_data[1]
+                        if shelf_position[move_in][0] > 0:
+                            approach_x = -0.07
+                        else:
+                            approach_x = 0.07
+                        places = Grasp()                    
+                        places.grasp_pos.position.x = shelf_position[move_in][0]
+                        places.grasp_pos.position.y = shelf_position[move_in][1]
+                        places.grasp_pos.position.z = shelf_position[move_in][2]
+                        places.grasp_pos.rotation.r = roll_dict[move_in]
+                        places.up = 0.0
+                        places.grasp_approach.x = approach_x
+                        places.grasp_approach.z = 0.04
+                        places.grasp_retreat.x = approach_x
+                        places.grasp_retreat.z = 0.02
+                        places.grasp_posture = 200
+                        places.pre_grasp_posture = 570                        
+                        place(places)                    
+                            
+                    target_data = []
+                    initMove()
+                else:
+                    rospy.sleep(0.01)
+            except BaseException as e:
+                rospy.loginfo("pick and place error:%s", e)
+        else:
+            rospy.sleep(0.01)
+            
+th = threading.Thread(target=move)
+th.setDaemon(True)
+th.start()
+
+# 将ros发布的图像转化成opencv能够处理的格式，并且将处理后的图像发布出去
+def image_callback(ros_image):  
+    global lock
+    
+    image = np.ndarray(shape=(ros_image.height, ros_image.width, 3), dtype=np.uint8,
+                       buffer=ros_image.data)  # 将自定义图像消息转化为图像
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    ros_image = common.cv2_image2ros(image)
+    image_pub.publish(ros_image)
+            
+def enter_func(msg):
+    global lock
+    global image_sub
+    global running
+    global registered
+    
+    rospy.loginfo("enter exchange")
+    with lock:
+        init()
+        if not registered:
+            registered = True
+            image_sub = rospy.Subscriber('/usb_cam/image_raw', Image, image_callback)
+        
+    return [True, 'enter']
+
+heartbeat_timer = None
+def exit_func(msg):
+    global lock
+    global image_sub
+    global running
+    global registered
+    
+    rospy.loginfo("exit exchange")
+    with lock:
+        running = False
+        try:
+            if registered:
+                registered = False
+                if heartbeat_timer is not None:
+                    heartbeat_timer.cancel()
+                image_sub.unregister()
+        except:
+            pass
+        
+    return [True, 'exit']
+
+def start_running():
+    global lock
+    global running
+    
+    rospy.loginfo("start running exchange")
+    with lock:
+        running = True
+
+def stop_running():
+    global lock
+    global running
+    
+    rospy.loginfo("stop running exchange")
+    with lock:
+        running = False
+        reset()
+
+def set_running(msg):
+    if msg.data:
+        start_running()
+    else:
+        stop_running()
+        
+    return [True, 'set_running']
+
+def set_target(msg):
+    global lock
+    global target_data
+    
+    rospy.loginfo('%s', msg.position)
+    with lock:
+        target_data = msg.position
+### ENDFILE: /home/pi/docker/src/exchange.py
+### FILE: /home/pi/docker/src/self_driving.launch.py
+import os
+from ament_index_python.packages import get_package_share_directory
+
+from launch_ros.actions import Node
+from launch import LaunchDescription, LaunchService
+from launch.substitutions import LaunchConfiguration
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, OpaqueFunction
+
+def launch_setup(context):
+    compiled = os.environ['need_compile']
+    start = LaunchConfiguration('start', default='true')
+    start_arg = DeclareLaunchArgument('start', default_value=start)
+    only_line_follow = LaunchConfiguration('only_line_follow', default='false')
+    only_line_follow_arg = DeclareLaunchArgument('only_line_follow', default_value=only_line_follow)
+    if compiled == 'True':
+        peripherals_package_path = get_package_share_directory('peripherals')
+        controller_package_path = get_package_share_directory('controller')
+        package_share_directory = get_package_share_directory('yolov5_ros2')
+    else:
+        peripherals_package_path = '/home/ubuntu/ros2_ws/src/peripherals'
+        controller_package_path = '/home/ubuntu/ros2_ws/src/driver/controller'
+        package_share_directory = '/home/ubuntu/ros2_ws/src/yolov5_ros2'
+
+    depth_camera_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(peripherals_package_path, 'launch/depth_camera.launch.py')),
+    )
+    controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(controller_package_path, 'launch/controller.launch.py')),
+    )
+
+    web_video_server_node = Node(
+        package='web_video_server',
+        executable='web_video_server',
+        output='screen',
+    )
+    yolov5_node = Node(
+        package='yolov5_ros2',
+        executable='yolo_detect',
+        output='screen',
+        parameters=[{'classes': ['go', 'right', 'park', 'red', 'green', 'crosswalk']},
+            {"device": "cpu",
+            "model": "traffic_signs_640s_7_0",
+            "image_topic": "/ascamera/camera_publisher/rgb0/image",
+            "camera_info_topic": "/camera/camera_info",
+            "camera_info_file": f"{package_share_directory}/config/camera_info.yaml",
+            # "show_result": True,
+            "pub_result_img": True}]
+    )
+
+    self_driving_node = Node(
+        package='example',
+        executable='self_driving',
+        output='screen',
+        parameters=[{'start': start}, {'only_line_follow': only_line_follow}],
+    )
+
+    return [start_arg,
+            only_line_follow_arg,
+            depth_camera_launch,
+            controller_launch,
+            #web_video_server_node,
+            yolov5_node, 
+            self_driving_node,
+            ]
+
+def generate_launch_description():
+    return LaunchDescription([
+        OpaqueFunction(function = launch_setup)
+    ])
+
+if __name__ == '__main__':
+    # create a LaunchDescription object
+    ld = generate_launch_description()
+
+    ls = LaunchService()
+    ls.include_launch_description(ld)
+    ls.run()
+
+### ENDFILE: /home/pi/docker/src/self_driving.launch.py
+### FILE: /home/pi/docker/src/out.py
+#!/usr/bin/python3
+# coding=utf8
+# Date:2021/04/20
+# Author:Aiden
+# 第13章 ArmPi FPV创意玩法课程\2.智慧仓储课程\第4课 智能出库
+import cv2
+import math
+import rospy
+import threading
+import numpy as np
+from threading import Timer
+
+from sensor_msgs.msg import Image
+from std_srvs.srv import Trigger, SetBool, SetBoolResponse
+
+from warehouse.msg import Grasp
+from warehouse.srv import SetOutTarget
+from ros_robot_controller.msg import BuzzerState 
+from hiwonder_servo_msgs.msg import MultiRawIdPosDur
+
+from armpi_fpv_common import common
+from hiwonder_servo_controllers import bus_servo_control
+from armpi_fpv_kinematics.kinematics_control import set_pose_target
+
+# 出仓
+# 如未声明，使用的长度，距离单位均为m
+
+# 初始化
+target_data = ()
+running = False
+registered = False
+lock = threading.RLock()
+
+# 初始位置
+def initMove():
+    with lock:
+        bus_servo_control.set_servos(joints_pub, 1.5, ((1, 200), (2, 500), (3, 80), (4, 825), (5, 625), (6, 500)))
+    rospy.sleep(2)
+
+# 变量重置
+def reset():
+    global target_data
+    
+    target_data = ()   
+
+# app初始化调用
+def init():
+    rospy.loginfo("out Init")
+    initMove()
+    reset()
+
+def pick(grasps):
+    position = grasps.grasp_pos.position
+    rotation = grasps.grasp_pos.rotation
+    approach = grasps.grasp_approach
+    retreat = grasps.grasp_retreat
+    
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+
+    if not running:
+        return False 
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        # 第一步：云台转到朝向目标方向，夹持器打开
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.8, ((1, grasps.pre_grasp_posture), (2, 500), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(0.8)
+        if not running:
+            return False
+        
+        # 第二步：移到接近点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))      
+        rospy.sleep(0.5)
+        if not running:
+            return False
+        
+        # 第三步：移到目标点
+        target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+        servo_data = target2[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+        rospy.sleep(1)
+        if not running:
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)            
+            return False
+        
+        # 第四步：夹取
+        bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.grasp_posture), ))               
+        rospy.sleep(1)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+            rospy.sleep(0.5)
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)             
+            return False
+        
+        # 第五步：抬升
+        target3 = set_pose_target((position.y, position.x, position.z + grasps.up), rotation.r, [-90, 90], 0)
+        servo_data = target3[1]
+        if servo_data != target2[1]:
+            bus_servo_control.set_servos(joints_pub, 0.4, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+            rospy.sleep(0.5)
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))      
+            rospy.sleep(1)              
+            return False
+        
+        # 第六步：移到撤离点
+        target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+        servo_data = target4[1]
+        if servo_data != target3[1]:            
+            bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))        
+            rospy.sleep(0.5)
+            if not running:
+                bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+                rospy.sleep(0.5)                 
+                return False
+            
+        # 第七步：移到稳定点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.5, ((2, 500), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(0.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, grasps.pre_grasp_posture), ))               
+            rospy.sleep(0.5)             
+            return False
+        
+        return target2[2]
+    else:
+        rospy.loginfo('pick failed')
+        return False
+
+def place(places):
+    position = places.grasp_pos.position
+    rotation = places.grasp_pos.rotation
+    approach = places.grasp_approach
+    retreat = places.grasp_retreat
+    
+    # 计算是否能够到达目标位置，如果不能够到达，返回False
+    target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+    target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+    target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+    target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+
+    if not running:
+        return False
+    if target1[1] and target2[1] and target3[1] and target4[1]:
+        # 第一步：云台转到朝向目标方向
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 0.8, ((1, places.pre_grasp_posture), (2, servo_data[0]), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(0.8)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)            
+            return False
+        
+        # 第二步：移到接近点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 1, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))      
+        rospy.sleep(1)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)            
+            return False
+        
+        # 第三步：移到目标点
+        target2 = set_pose_target((position.y, position.x, position.z), rotation.r, [-90, 90], 0)
+        servo_data = target2[1]
+        if servo_data != target1[1]:        
+            bus_servo_control.set_servos(joints_pub, 1, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(1.5)
+        if not running:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((1, places.grasp_posture), ))               
+            rospy.sleep(0.5)
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))    
+            rospy.sleep(1)              
+            return False
+        
+        # 第四步：放置
+        bus_servo_control.set_servos(joints_pub, 0.8, ((1, places.grasp_posture), ))         
+        rospy.sleep(1)
+        if not running:
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)              
+            return False
+        
+        # 第五步：抬升
+        target3 = set_pose_target((position.y, position.x, position.z + places.up), rotation.r, [-90, 90], 0)
+        servo_data = target3[1]
+        if servo_data != target2[1]:
+            bus_servo_control.set_servos(joints_pub, 0.8, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.8)
+        if not running:
+            target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+            servo_data = target4[1]
+            bus_servo_control.set_servos(joints_pub, 1, ((1, 200), (3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))       
+            rospy.sleep(1)              
+            return False
+        
+        # 第六步：移到撤离点
+        target4 = set_pose_target((position.y + retreat.y, position.x + retreat.x, position.z + retreat.z), rotation.r, [-90, 90], 0)
+        servo_data = target4[1]
+        if servo_data != target3[1]:
+            bus_servo_control.set_servos(joints_pub, 0.5, ((3, servo_data[3]), (4, servo_data[2]), (5, servo_data[1]), (6, servo_data[0])))
+            rospy.sleep(0.5)
+            if not running:
+                return False
+            
+        # 第七步：移到稳定点
+        target1 = set_pose_target((position.y + approach.y, position.x + approach.x, position.z + approach.z), rotation.r, [-90, 90], 0)
+        servo_data = target1[1]
+        bus_servo_control.set_servos(joints_pub, 1, ((2, 500), (3, 80), (4, 825), (5, 625), (6, servo_data[0])))
+        rospy.sleep(1)
+        if not running:
+            return False
+        
+        return True
+    else:
+        rospy.loginfo('place failed')
+        return False
+
+#############################################
+# 货架每层位置x, y, z(m)
+shelf_position = {'R1':[-0.277,  0, 0.02],
+                  'R2':[-0.277,  0, 0.12],
+                  'R3':[-0.277,  0, 0.21],
+                  'L1':[0.277, 0, 0.02],
+                  'L2':[0.277, 0, 0.12],
+                  'L3':[0.277, 0, 0.21]}
+
+# 每层货架对应放置点位置x, y, z(m)
+place_position = {'R1':[-0.06, 0.15, 0.01],
+                  'R2':[0.06,  0.15, 0.01],
+                  'R3':[0,     0.15, 0.01],
+                  'L1':[-0.06, 0.22, 0.015],
+                  'L2':[0.06,  0.22, 0.015],
+                  'L3':[0,     0.22, 0.015]}
+###############################################
+# 每层放置时的俯仰角
+roll_dict = {'R1': 50,
+             'R2': 60,
+             'R3': 90,
+             'L1': 50,
+             'L2': 60,
+             'L3': 90}
+
+def move():
+    while True:
+        if running:            
+            if len(target_data) != 0:
+                i = target_data[0] 
+                if running:
+                    if shelf_position[i][0] > 0:
+                        approach_x = -0.07
+                    else:
+                        approach_x = 0.07
+                                        
+                    grasps = Grasp()
+                    # 夹取的位置
+                    grasps.grasp_pos.position.x = shelf_position[i][0]
+                    grasps.grasp_pos.position.y = shelf_position[i][1]
+                    grasps.grasp_pos.position.z = shelf_position[i][2]
+                    
+                    # 夹取时的俯仰角
+                    grasps.grasp_pos.rotation.r = roll_dict[i]
+                    
+                    # 夹取后抬升的距离
+                    grasps.up = 0
+                    
+                    # 夹取时靠近的方向和距离
+                    grasps.grasp_approach.x = approach_x
+                    
+                    # 夹取后后撤的方向和距离
+                    grasps.grasp_retreat.x = approach_x
+                    grasps.grasp_retreat.z = 0.02
+                    
+                    # 夹取前后夹持器的开合
+                    grasps.grasp_posture = 570
+                    grasps.pre_grasp_posture = 200
+                    msg = BuzzerState()
+                    msg.freq = 1900
+                    msg.on_time = 0.1
+                    msg.off_time = 0.9
+                    msg.repeat = 1
+                    buzzer_pub.publish(msg)
+                    result = pick(grasps)                              
+                    if result:                    
+                        if place_position[i][0] < 0:
+                            yaw = int(120 - (90 + math.degrees(math.atan2(place_position[i][0], place_position[i][1]))))
+                        else:
+                            yaw = int(120 + (90 - math.degrees(math.atan2(place_position[i][0], place_position[i][1]))))
+                        places = Grasp()                    
+                        places.grasp_pos.position.x = place_position[i][0]
+                        places.grasp_pos.position.y = place_position[i][1]
+                        places.grasp_pos.position.z = place_position[i][2]
+                        places.grasp_pos.rotation.r = -160
+                        
+                        places.up = 0.045
+                        places.grasp_approach.z = places.up
+                        places.grasp_retreat.z = places.up
+                        places.grasp_posture = 200
+                        places.pre_grasp_posture = 570
+                        
+                        place(places)
+                        try:
+                            target_data.remove(i)
+                        except BaseException as e:
+                            print(e)
+                    initMove()
+            else:
+                rospy.sleep(0.01)
+        else:
+            rospy.sleep(0.01)
+            
+th = threading.Thread(target=move)
+th.setDaemon(True)
+th.start()
+
+# 将ros发布的图像转化成opencv能够处理的格式，并且将处理后的图像发布出去
+def image_callback(ros_image):
+    global lock
+    
+    image = np.ndarray(shape=(ros_image.height, ros_image.width, 3), dtype=np.uint8,
+                       buffer=ros_image.data)  # 将自定义图像消息转化为图像
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    ros_image = common.cv2_image2ros(image)
+    image_pub.publish(ros_image)
+            
+def enter_func(msg):
+    global lock
+    global image_sub
+    global running
+    global registered
+    
+    rospy.loginfo("enter out")
+    with lock:
+        init()
+        if not registered:
+            registered = True
+            image_sub = rospy.Subscriber('/usb_cam/image_raw', Image, image_callback)
+        
+    return [True, 'enter']
+
+heartbeat_timer = None
+def exit_func(msg):
+    global lock
+    global image_sub
+    global running
+    global registered
+    
+    rospy.loginfo("exit out")
+    with lock:
+        running = False
+        try:
+            if registered:
+                registered = False
+                if heartbeat_timer is not None:
+                    heartbeat_timer.cancel()
+                image_sub.unregister()
+        except:
+            pass
+        
+    return [True, 'exit']
+
+def start_running():
+    global lock
+    global running
+    
+    rospy.loginfo("start running out")
+    with lock:
+        running = True
+
+def stop_running():
+    global lock
+    global running
+    
+    rospy.loginfo("stop running out")
+    with lock:
+        running = False
+        reset()
+
+### ENDFILE: /home/pi/docker/src/out.py
+
+--- ~/.bashrc ---
+# ~/.bashrc: executed by bash(1) for non-login shells.
+# see /usr/share/doc/bash/examples/startup-files (in the package bash-doc)
+# for examples
+
+# If not running interactively, don't do anything
+case $- in
+    *i*) ;;
+      *) return;;
+esac
+
+# don't put duplicate lines or lines starting with space in the history.
+# See bash(1) for more options
+HISTCONTROL=ignoreboth
+
+# append to the history file, don't overwrite it
+shopt -s histappend
+
+# for setting history length see HISTSIZE and HISTFILESIZE in bash(1)
+HISTSIZE=1000
+HISTFILESIZE=2000
+
+# check the window size after each command and, if necessary,
+# update the values of LINES and COLUMNS.
+shopt -s checkwinsize
+
+# If set, the pattern "**" used in a pathname expansion context will
+# match all files and zero or more directories and subdirectories.
+#shopt -s globstar
+
+# make less more friendly for non-text input files, see lesspipe(1)
+#[ -x /usr/bin/lesspipe ] && eval "$(SHELL=/bin/sh lesspipe)"
+
+# set variable identifying the chroot you work in (used in the prompt below)
+if [ -z "${debian_chroot:-}" ] && [ -r /etc/debian_chroot ]; then
+    debian_chroot=$(cat /etc/debian_chroot)
+fi
+
+# set a fancy prompt (non-color, unless we know we "want" color)
+case "$TERM" in
+    xterm-color|*-256color) color_prompt=yes;;
+esac
+
+# uncomment for a colored prompt, if the terminal has the capability; turned
+# off by default to not distract the user: the focus in a terminal window
+# should be on the output of commands, not on the prompt
+force_color_prompt=yes
+
+if [ -n "$force_color_prompt" ]; then
+    if [ -x /usr/bin/tput ] && tput setaf 1 >&/dev/null; then
+	# We have color support; assume it's compliant with Ecma-48
+	# (ISO/IEC-6429). (Lack of such support is extremely rare, and such
+	# a case would tend to support setf rather than setaf.)
+	color_prompt=yes
+    else
+	color_prompt=
+    fi
+fi
+
+if [ "$color_prompt" = yes ]; then
+    PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w \$\[\033[00m\] '
+else
+    PS1='${debian_chroot:+($debian_chroot)}\u@\h:\w\$ '
+fi
+unset color_prompt force_color_prompt
+
+# If this is an xterm set the title to user@host:dir
+case "$TERM" in
+xterm*|rxvt*)
+    PS1="\[\e]0;${debian_chroot:+($debian_chroot)}\u@\h: \w\a\]$PS1"
+    ;;
+*)
+    ;;
+esac
+
+# enable color support of ls and also add handy aliases
+if [ -x /usr/bin/dircolors ]; then
+    test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
+    alias ls='ls --color=auto'
+    #alias dir='dir --color=auto'
+    #alias vdir='vdir --color=auto'
+
+    alias grep='grep --color=auto'
+    alias fgrep='fgrep --color=auto'
+    alias egrep='egrep --color=auto'
+fi
+
+# colored GCC warnings and errors
+#export GCC_COLORS='error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01'
+
+# some more ls aliases
+#alias ll='ls -l'
+#alias la='ls -A'
+#alias l='ls -CF'
+
+# Alias definitions.
+# You may want to put all your additions into a separate file like
+# ~/.bash_aliases, instead of adding them here directly.
+# See /usr/share/doc/bash-doc/examples in the bash-doc package.
+
+if [ -f ~/.bash_aliases ]; then
+    . ~/.bash_aliases
+fi
+
+# enable programmable completion features (you don't need to enable
+# this, if it's already enabled in /etc/bash.bashrc and /etc/profile
+# sources /etc/bash.bashrc).
+if ! shopt -oq posix; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
+    . /etc/bash_completion
+  fi
+fi
+
+--- crontab -l (pi) ---
+no crontab for pi
+--- crontab -l (root, sudo -n) ---
+no crontab for root
+
+--- docker compose / ps ---
+CONTAINER ID                                                       IMAGE        COMMAND               CREATED       STATUS       PORTS     NAMES
+adb8457c2eeca33b9aaca2386cf11b344580fd5290cd38395289698a0ebcc448   ros:humble   "tail -f /dev/null"   2 years ago   Up 5 hours             MentorPi
+
+--- docker inspect MentorPi (selected) ---
+Image: ros:humble
+Cmd: ['tail', '-f', '/dev/null']
+Entrypoint: None
+WorkingDir: 
+User: 
+RestartPolicy: {'Name': 'always', 'MaximumRetryCount': 0}
+Privileged: True
+NetworkMode: host
+Binds: ['/dev:/dev', '/tmp/.X11-unix:/tmp/.X11-unix', '/run/user/1000/pulse:/run/user/1000/pulse', '/etc/machine-id:/etc/machine-id', '/var/lib/dbus:/var/lib/dbus', '/home/pi/docker_ros2/tmp:/home/ubuntu/share/tmp']
+PortBindings: {}
+Env:
+   PULSE_SERVER=unix:/run/user/1000/pulse/native
+   LIBGL_ALWAYS_SOFTWARE=1
+   DISPLAY=:0
+   XAUTHORITY=
+Mounts:
+   bind /tmp/.X11-unix -> /tmp/.X11-unix rw= True
+   bind /var/lib/dbus -> /var/lib/dbus rw= True
+   bind /dev -> /dev rw= True
+   bind /home/pi/docker/tmp -> /home/ubuntu/shared rw= True
+   bind /run/user/1000/pulse -> /run/user/1000/pulse rw= True
+
+--- container / ---
+total 2102220
+drwxr-xr-x   1 root root       4096 Sep 19 06:12 .
+drwxr-xr-x   1 root root       4096 Sep 19 06:12 ..
+-rwxr-xr-x   1 root root          0 Jun 21  2024 .dockerenv
+drwxr-xr-x   2 root root       4096 Feb 29  2024 :
+lrwxrwxrwx   1 root root          7 Feb 12  2024 bin -> usr/bin
+drwxr-xr-x   2 root root       4096 Apr 18  2022 boot
+drwxr-xr-x  17 root root       4460 Sep 19 01:44 dev
+drwxr-xr-x   1 root root       4096 Jul 14  2025 etc
+drwxr-xr-x   1 root root       4096 Feb 29  2024 home
+lrwxrwxrwx   1 root root          7 Feb 12  2024 lib -> usr/lib
+drwxr-xr-x   6 root root       4096 Feb 16  2024 log
+drwxr-xr-x   2 root root       4096 Feb 12  2024 media
+drwxr-xr-x   2 root root       4096 Feb 12  2024 mnt
+drwxr-xr-x   1 root root       4096 Sep 15 13:18 opt
+dr-xr-xr-x 343 root root          0 Sep 19 01:44 proc
+drwx------   1 root root       4096 Aug  8 11:46 root
+-rwxrwxr-x   1 root root        100 Mar  1  2024 ros_entrypoint.sh
+-rwxrwxr-x   1 root root         99 Feb 16  2024 ros_entrypoint.sh~
+drwxr-xr-x   1 root root       4096 Sep 17 20:17 run
+lrwxrwxrwx   1 root root          8 Feb 12  2024 sbin -> usr/sbin
+drwxr-xr-x   2 root root       4096 Jun 24  2024 shared
+drwxr-xr-x   2 root root       4096 Feb 12  2024 srv
+-rw-------   1 root root 2147483648 Jul 22  2024 swapfile
+dr-xr-xr-x  12 root root          0 Jan  1  1970 sys
+drwxrwxrwt   1 root root    5074944 Sep 19 01:44 tmp
+drwxr-xr-x   1 root root       4096 Feb 12  2024 usr
+drwxr-xr-x   1 root root       4096 Apr 14  2025 var
+--- container /ros2_ws ---
+ls: cannot access '/ros2_ws': No such file or directory
+
+
+--- unit files content ---
+### UNIT: formation-agent@.service
+[Unit]
+Description=Distributed CZ225 MentorPi formation agent for %i
+After=network-online.target docker.service mentorpi-localization.service mentorpi-localization-vendor-domain.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/default/openvela-formation
+ExecStartPre=/opt/openvela-formation/scripts/stop_formation_agent.sh %i
+ExecStart=/opt/openvela-formation/scripts/run_formation_agent.sh %i
+ExecStop=/opt/openvela-formation/scripts/stop_formation_agent.sh %i
+KillSignal=SIGINT
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+### ENDUNIT: formation-agent@.service
+### UNIT: formation-command-bridge@.service
+[Unit]
+Description=Locked formation command bridge for %i
+Requires=docker.service start_node.service
+After=docker.service start_node.service
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/opt/openvela-formation/scripts/run_command_bridge.sh %i
+ExecStopPost=/opt/openvela-formation/scripts/stop_command_bridge.sh %i
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+### ENDUNIT: formation-command-bridge@.service
+### UNIT: fleet-bridge@.service
+[Unit]
+Description=Read-only ROS2 fleet data bridge for %i
+Requires=docker.service start_node.service
+After=docker.service start_node.service
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/opt/openvela-formation/scripts/run_fleet_bridge.sh %i
+ExecStop=/opt/openvela-formation/scripts/stop_fleet_bridge.sh %i
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+### ENDUNIT: fleet-bridge@.service
+### UNIT: fleet-ntp.service
+cat: /etc/systemd/system/fleet-ntp.service: No such file or directory
+### ENDUNIT: fleet-ntp.service
+### UNIT: cmd-vel-watchdog.service
+[Unit]
+Description=cmd_vel safety watchdog (stop the car when commands stop)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /opt/openvela-formation/scripts/run_cmd_vel_watchdog.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+### ENDUNIT: cmd-vel-watchdog.service
+### UNIT: formation-reconfiguration.service
+cat: /etc/systemd/system/formation-reconfiguration.service: No such file or directory
+### ENDUNIT: formation-reconfiguration.service
+
+--- container state/ ---
+total 8
+drwxr-x--- 2 ubuntu ubuntu 4096 Sep 17 08:38 .
+drwxr-xr-x 7 ubuntu ubuntu 4096 Sep 18 04:12 ..
+
+### STATE: /opt/openvela-formation/state/*
+head: cannot open '/opt/openvela-formation/state/*' for reading: No such file or directory
+
+
+--- journalctl tails ---
+### JOURNAL: formation-agent@robot3
+Sep 19 06:43:20 robot3 systemd[1]: Started formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3.
+Sep 19 06:43:23 robot3 run_formation_agent.sh[2512]: Exception ignored in: <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>
+Sep 19 06:43:23 robot3 run_formation_agent.sh[2512]: BrokenPipeError: [Errno 32] Broken pipe
+Sep 19 06:43:23 robot3 systemd[1]: formation-agent@robot3.service: Main process exited, code=exited, status=137/n/a
+Sep 19 06:43:23 robot3 systemd[1]: formation-agent@robot3.service: Failed with result 'exit-code'.
+Sep 19 06:43:25 robot3 systemd[1]: formation-agent@robot3.service: Scheduled restart job, restart counter is at 1.
+Sep 19 06:43:25 robot3 systemd[1]: Stopped formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3.
+Sep 19 06:43:25 robot3 systemd[1]: Starting formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3...
+Sep 19 06:43:25 robot3 systemd[1]: Started formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3.
+-- Boot 94db0d56c9ce4db5b3e31f1c8b5e879d --
+Sep 19 08:14:05 robot3 systemd[1]: Starting formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3...
+Sep 19 08:14:06 robot3 systemd[1]: Started formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3.
+Sep 19 08:14:07 robot3 systemd[1]: formation-agent@robot3.service: Main process exited, code=exited, status=137/n/a
+Sep 19 08:14:07 robot3 systemd[1]: formation-agent@robot3.service: Failed with result 'exit-code'.
+Sep 19 08:14:09 robot3 systemd[1]: formation-agent@robot3.service: Scheduled restart job, restart counter is at 1.
+Sep 19 08:14:09 robot3 systemd[1]: Stopped formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3.
+Sep 19 08:14:09 robot3 systemd[1]: Starting formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3...
+Sep 19 08:14:09 robot3 systemd[1]: Started formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3.
+-- Boot 55ec7504c96f46358d29f32b2cd8852d --
+Sep 19 09:44:17 robot3 systemd[1]: Starting formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3...
+Sep 19 09:44:17 robot3 systemd[1]: Started formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3.
+Sep 19 09:44:18 robot3 systemd[1]: formation-agent@robot3.service: Main process exited, code=exited, status=137/n/a
+Sep 19 09:44:18 robot3 systemd[1]: formation-agent@robot3.service: Failed with result 'exit-code'.
+Sep 19 09:44:20 robot3 systemd[1]: formation-agent@robot3.service: Scheduled restart job, restart counter is at 1.
+Sep 19 09:44:20 robot3 systemd[1]: Stopped formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3.
+Sep 19 09:44:20 robot3 systemd[1]: Starting formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3...
+Sep 19 09:44:20 robot3 systemd[1]: Started formation-agent@robot3.service - Distributed CZ225 MentorPi formation agent for robot3.
+### ENDJOURNAL: formation-agent@robot3
+### JOURNAL: formation-command-bridge@robot3
+Sep 18 22:56:59 robot3 systemd[1]: Started formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 18 22:57:04 robot3 run_command_bridge.sh[3302]: command bridge robot3: local=3 fleet=42 locked
+-- Boot a42ac353bb584d9b86b07ab58aeb09d3 --
+Sep 19 06:43:19 robot3 systemd[1]: Started formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 19 06:43:23 robot3 run_command_bridge.sh[2261]: Exception ignored in: <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>
+Sep 19 06:43:23 robot3 run_command_bridge.sh[2261]: BrokenPipeError: [Errno 32] Broken pipe
+Sep 19 06:43:23 robot3 systemd[1]: formation-command-bridge@robot3.service: Main process exited, code=exited, status=137/n/a
+Sep 19 06:43:23 robot3 systemd[1]: formation-command-bridge@robot3.service: Failed with result 'exit-code'.
+Sep 19 06:43:24 robot3 systemd[1]: formation-command-bridge@robot3.service: Scheduled restart job, restart counter is at 1.
+Sep 19 06:43:24 robot3 systemd[1]: Stopped formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 19 06:43:24 robot3 systemd[1]: Started formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 19 06:43:27 robot3 run_command_bridge.sh[4257]: command bridge robot3: local=3 fleet=42 locked
+-- Boot 94db0d56c9ce4db5b3e31f1c8b5e879d --
+Sep 19 08:14:05 robot3 systemd[1]: Started formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 19 08:14:07 robot3 systemd[1]: formation-command-bridge@robot3.service: Main process exited, code=exited, status=137/n/a
+Sep 19 08:14:07 robot3 systemd[1]: formation-command-bridge@robot3.service: Failed with result 'exit-code'.
+Sep 19 08:14:08 robot3 systemd[1]: formation-command-bridge@robot3.service: Scheduled restart job, restart counter is at 1.
+Sep 19 08:14:08 robot3 systemd[1]: Stopped formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 19 08:14:08 robot3 systemd[1]: Started formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 19 08:14:13 robot3 run_command_bridge.sh[3411]: command bridge robot3: local=3 fleet=42 locked
+-- Boot 55ec7504c96f46358d29f32b2cd8852d --
+Sep 19 09:44:17 robot3 systemd[1]: Started formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 19 09:44:18 robot3 systemd[1]: formation-command-bridge@robot3.service: Main process exited, code=exited, status=137/n/a
+Sep 19 09:44:18 robot3 systemd[1]: formation-command-bridge@robot3.service: Failed with result 'exit-code'.
+Sep 19 09:44:19 robot3 systemd[1]: formation-command-bridge@robot3.service: Scheduled restart job, restart counter is at 1.
+Sep 19 09:44:19 robot3 systemd[1]: Stopped formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 19 09:44:19 robot3 systemd[1]: Started formation-command-bridge@robot3.service - Locked formation command bridge for robot3.
+Sep 19 09:44:24 robot3 run_command_bridge.sh[3324]: command bridge robot3: local=3 fleet=42 locked
+### ENDJOURNAL: formation-command-bridge@robot3
+### JOURNAL: fleet-bridge@robot3
+Sep 18 22:57:01 robot3 systemd[1]: Started fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 18 22:57:04 robot3 run_fleet_bridge.sh[4131]: fleet bridge robot3: local=3 fleet=42
+-- Boot a42ac353bb584d9b86b07ab58aeb09d3 --
+Sep 19 06:43:19 robot3 systemd[1]: Started fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 19 06:43:23 robot3 run_fleet_bridge.sh[2257]: Exception ignored in: <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>
+Sep 19 06:43:23 robot3 run_fleet_bridge.sh[2257]: BrokenPipeError: [Errno 32] Broken pipe
+Sep 19 06:43:23 robot3 systemd[1]: fleet-bridge@robot3.service: Main process exited, code=exited, status=137/n/a
+Sep 19 06:43:23 robot3 systemd[1]: fleet-bridge@robot3.service: Failed with result 'exit-code'.
+Sep 19 06:43:26 robot3 systemd[1]: fleet-bridge@robot3.service: Scheduled restart job, restart counter is at 1.
+Sep 19 06:43:26 robot3 systemd[1]: Stopped fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 19 06:43:26 robot3 systemd[1]: Started fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 19 06:43:27 robot3 run_fleet_bridge.sh[4724]: fleet bridge robot3: local=3 fleet=42
+-- Boot 94db0d56c9ce4db5b3e31f1c8b5e879d --
+Sep 19 08:14:05 robot3 systemd[1]: Started fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 19 08:14:07 robot3 systemd[1]: fleet-bridge@robot3.service: Main process exited, code=exited, status=137/n/a
+Sep 19 08:14:07 robot3 systemd[1]: fleet-bridge@robot3.service: Failed with result 'exit-code'.
+Sep 19 08:14:10 robot3 systemd[1]: fleet-bridge@robot3.service: Scheduled restart job, restart counter is at 1.
+Sep 19 08:14:10 robot3 systemd[1]: Stopped fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 19 08:14:10 robot3 systemd[1]: Started fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 19 08:14:13 robot3 run_fleet_bridge.sh[3873]: fleet bridge robot3: local=3 fleet=42
+-- Boot 55ec7504c96f46358d29f32b2cd8852d --
+Sep 19 09:44:17 robot3 systemd[1]: Started fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 19 09:44:18 robot3 systemd[1]: fleet-bridge@robot3.service: Main process exited, code=exited, status=137/n/a
+Sep 19 09:44:18 robot3 systemd[1]: fleet-bridge@robot3.service: Failed with result 'exit-code'.
+Sep 19 09:44:21 robot3 systemd[1]: fleet-bridge@robot3.service: Scheduled restart job, restart counter is at 1.
+Sep 19 09:44:21 robot3 systemd[1]: Stopped fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 19 09:44:21 robot3 systemd[1]: Started fleet-bridge@robot3.service - Read-only ROS2 fleet data bridge for robot3.
+Sep 19 09:44:24 robot3 run_fleet_bridge.sh[4608]: fleet bridge robot3: local=3 fleet=42
+### ENDJOURNAL: fleet-bridge@robot3
+### JOURNAL: formation-reconfiguration
+-- No entries --
+### ENDJOURNAL: formation-reconfiguration
+### JOURNAL: cmd-vel-watchdog
+Sep 19 06:43:19 robot3 systemd[1]: Started cmd-vel-watchdog.service - cmd_vel safety watchdog (stop the car when commands stop).
+Sep 19 06:43:22 robot3 systemd[1]: cmd-vel-watchdog.service: Main process exited, code=exited, status=137/n/a
+Sep 19 06:43:22 robot3 systemd[1]: cmd-vel-watchdog.service: Failed with result 'exit-code'.
+Sep 19 06:43:25 robot3 systemd[1]: cmd-vel-watchdog.service: Scheduled restart job, restart counter is at 1.
+Sep 19 06:43:25 robot3 systemd[1]: Stopped cmd-vel-watchdog.service - cmd_vel safety watchdog (stop the car when commands stop).
+Sep 19 06:43:25 robot3 systemd[1]: Started cmd-vel-watchdog.service - cmd_vel safety watchdog (stop the car when commands stop).
+Sep 19 06:43:27 robot3 bash[4517]: [INFO] [1789771407.519723949] [cmd_vel_watchdog]: cmd_vel 看门狗已启动：0.5 秒没有新指令就发零速度停车
+-- Boot 94db0d56c9ce4db5b3e31f1c8b5e879d --
+Sep 19 08:14:05 robot3 systemd[1]: Started cmd-vel-watchdog.service - cmd_vel safety watchdog (stop the car when commands stop).
+Sep 19 08:14:07 robot3 systemd[1]: cmd-vel-watchdog.service: Main process exited, code=exited, status=137/n/a
+Sep 19 08:14:07 robot3 systemd[1]: cmd-vel-watchdog.service: Failed with result 'exit-code'.
+Sep 19 08:14:10 robot3 systemd[1]: cmd-vel-watchdog.service: Scheduled restart job, restart counter is at 1.
+Sep 19 08:14:10 robot3 systemd[1]: Stopped cmd-vel-watchdog.service - cmd_vel safety watchdog (stop the car when commands stop).
+Sep 19 08:14:10 robot3 systemd[1]: Started cmd-vel-watchdog.service - cmd_vel safety watchdog (stop the car when commands stop).
+Sep 19 08:14:13 robot3 bash[3872]: [INFO] [1789776853.175373114] [cmd_vel_watchdog]: cmd_vel 看门狗已启动：0.5 秒没有新指令就发零速度停车
+-- Boot 55ec7504c96f46358d29f32b2cd8852d --
+Sep 19 09:44:17 robot3 systemd[1]: Started cmd-vel-watchdog.service - cmd_vel safety watchdog (stop the car when commands stop).
+Sep 19 09:44:18 robot3 systemd[1]: cmd-vel-watchdog.service: Main process exited, code=exited, status=137/n/a
+Sep 19 09:44:18 robot3 systemd[1]: cmd-vel-watchdog.service: Failed with result 'exit-code'.
+Sep 19 09:44:21 robot3 systemd[1]: cmd-vel-watchdog.service: Scheduled restart job, restart counter is at 1.
+Sep 19 09:44:21 robot3 systemd[1]: Stopped cmd-vel-watchdog.service - cmd_vel safety watchdog (stop the car when commands stop).
+Sep 19 09:44:21 robot3 systemd[1]: Started cmd-vel-watchdog.service - cmd_vel safety watchdog (stop the car when commands stop).
+Sep 19 09:44:24 robot3 bash[4555]: [INFO] [1789782264.126003468] [cmd_vel_watchdog]: cmd_vel 看门狗已启动：0.5 秒没有新指令就发零速度停车
+Sep 19 11:13:22 robot3 bash[4555]: [WARN] [1789787602.854335061] [cmd_vel_watchdog]: 指令中断 0.5 秒，已发零速度停车（累计 1 次）
+Sep 19 11:19:39 robot3 bash[4555]: [WARN] [1789787979.503875582] [cmd_vel_watchdog]: 指令中断 0.5 秒，已发零速度停车（累计 2 次）
+Sep 19 11:20:30 robot3 bash[4555]: [WARN] [1789788030.003829115] [cmd_vel_watchdog]: 指令中断 0.5 秒，已发零速度停车（累计 3 次）
+Sep 19 11:21:23 robot3 bash[4555]: [WARN] [1789788083.353751481] [cmd_vel_watchdog]: 指令中断 0.5 秒，已发零速度停车（累计 4 次）
+### ENDJOURNAL: cmd-vel-watchdog
+
+--- host /opt/openvela-formation ---
+/opt/openvela-formation:
+total 20
+drwxr-xr-x  5 root root 4096 Sep 18 06:54 .
+drwxr-xr-x  6 root root 4096 Sep 15 21:18 ..
+drwxr-xr-x 13 root root 4096 Sep 18 08:53 backups
+drwxr-xr-x  2 root root 4096 Sep 17 15:07 maps
+drwxr-xr-x  2 root root 4096 Sep 18 08:53 scripts
+
+/opt/openvela-formation/backups:
+total 52
+drwxr-xr-x 13 root root 4096 Sep 18 08:53 .
+drwxr-xr-x  5 root root 4096 Sep 18 06:54 ..
+drwxr-xr-x  2 root root 4096 Sep 18 07:25 agent-ratefix-20260918-222813
+drwxr-xr-x  2 root root 4096 Sep 18 07:39 fleet-endpoint-bool-20260918-224137
+drwxr-xr-x  2 root root 4096 Sep 18 08:43 fleet-endpoint-bool-20260919-001758
+drwxr-xr-x  4 root root 4096 Sep 18 06:54 formation-agent-stopfix-20260918-215510
+drwxr-xr-x  4 root root 4096 Sep 18 07:09 formation-agent-stopfix-20260918-221152
+drwxr-xr-x  4 root root 4096 Sep 18 08:51 formation-agent-stopfix-20260919-002532
+drwxr-xr-x  4 root root 4096 Sep 18 08:53 formation-agent-stopfix-20260919-002744
+drwxr-xr-x  2 root root 4096 Sep 18 07:33 formation-kit-agent-20260918-223531
+drwxr-xr-x  2 root root 4096 Sep 18 08:42 formation-kit-agent-20260919-001654
+drwxr-xr-x  2 root root 4096 Sep 18 08:41 formation-planner-20260919-001623
+drwxr-xr-x  2 root root 4096 Sep 18 08:48 formation-planner-20260919-002255
+
+/opt/openvela-formation/backups/agent-ratefix-20260918-222813:
+total 8
+drwxr-xr-x  2 root root 4096 Sep 18 07:25 .
+drwxr-xr-x 13 root root 4096 Sep 18 08:53 ..
+
+/opt/openvela-formation/backups/fleet-endpoint-bool-20260918-224137:
+total 8
+drwxr-xr-x  2 root root 4096 Sep 18 07:39 .
+drwxr-xr-x 13 root root 4096 Sep 18 08:53 ..
+
+/opt/openvela-formation/backups/fleet-endpoint-bool-20260919-001758:
+total 8
+drwxr-xr-x  2 root root 4096 Sep 18 08:43 .
+drwxr-xr-x 13 root root 4096 Sep 18 08:53 ..
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-215510:
+total 16
+drwxr-xr-x  4 root root 4096 Sep 18 06:54 .
+drwxr-xr-x 13 root root 4096 Sep 18 08:53 ..
+drwxr-xr-x  3 root root 4096 Sep 18 06:54 etc
+drwxr-xr-x  3 root root 4096 Sep 18 06:54 opt
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-215510/etc:
+total 12
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 .
+drwxr-xr-x 4 root root 4096 Sep 18 06:54 ..
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 systemd
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-215510/etc/systemd:
+total 12
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 .
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 ..
+drwxr-xr-x 2 root root 4096 Sep 18 06:54 system
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-215510/etc/systemd/system:
+total 12
+drwxr-xr-x 2 root root 4096 Sep 18 06:54 .
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 ..
+-rw-r--r-- 1 root root  451 Sep 16 18:42 formation-agent@.service
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-215510/opt:
+total 12
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 .
+drwxr-xr-x 4 root root 4096 Sep 18 06:54 ..
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 openvela-formation
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-215510/opt/openvela-formation:
+total 12
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 .
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 ..
+drwxr-xr-x 2 root root 4096 Sep 18 06:54 scripts
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-215510/opt/openvela-formation/scripts:
+total 8
+drwxr-xr-x 2 root root 4096 Sep 18 06:54 .
+drwxr-xr-x 3 root root 4096 Sep 18 06:54 ..
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-221152:
+total 16
+drwxr-xr-x  4 root root 4096 Sep 18 07:09 .
+drwxr-xr-x 13 root root 4096 Sep 18 08:53 ..
+drwxr-xr-x  3 root root 4096 Sep 18 07:09 etc
+drwxr-xr-x  3 root root 4096 Sep 18 07:09 opt
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-221152/etc:
+total 12
+drwxr-xr-x 3 root root 4096 Sep 18 07:09 .
+drwxr-xr-x 4 root root 4096 Sep 18 07:09 ..
+drwxr-xr-x 3 root root 4096 Sep 18 07:09 systemd
+
+/opt/openvela-formation/backups/formation-agent-stopfix-20260918-221152/etc/systemd:
+total 12
+drwxr-xr-x 3 root root 4096 Sep 18 07:09 .
+drwxr-xr-x 3 root root 4096 Sep 18 07:09 ..
+drwxr-xr-x 2 root root 4096 Sep 18 07:09 system
+
+
+--- host scripts/ listing ---
+total 96
+drwxr-xr-x 2 root root 4096 Sep 18 08:53 .
+drwxr-xr-x 5 root root 4096 Sep 18 06:54 ..
+-rwxr-xr-x 1 root root 1331 Sep 17 11:24 arm_command_bridge.sh
+-rwxr-xr-x 1 root root 1188 Sep 16 18:42 disable_formation_agent.sh
+-rwxr-xr-x 1 root root  228 Sep 17 11:24 disarm_command_bridge.sh
+-rwxr-xr-x 1 root root 1312 Sep 16 18:42 enable_formation_agent.sh
+-rwxr-xr-x 1 root root  555 Sep 17 20:21 run_cmd_vel_watchdog.sh
+-rwxr-xr-x 1 root root  655 Sep 17 19:10 run_command_bridge.sh
+-rwxr-xr-x 1 root root  576 Sep 17 11:24 run_command_bridge.sh.bak-unicast
+-rwxr-xr-x 1 root root 3560 Sep 16 18:42 run_distance_mission.sh
+-rwxr-xr-x 1 root root  587 Sep 17 19:10 run_fleet_bridge.sh
+-rwxr-xr-x 1 root root  508 Sep 16 23:22 run_fleet_bridge.sh.bak-unicast
+-rwxr-xr-x 1 root root  715 Sep 17 23:14 run_formation_agent.sh
+-rwxr-xr-x 1 root root 1069 Sep 17 19:10 run_formation_agent.sh.bak-20260918-122455
+-rwxr-xr-x 1 root root  990 Sep 16 18:42 run_formation_agent.sh.bak-unicast
+-rwxr-xr-x 1 root root 1500 Sep 17 18:33 run_localization.sh
+-rwxr-xr-x 1 root root 1090 Sep 17 18:33 run_localization.sh.bak-20260917
+-rwxr-xr-x 1 root root 1000 Sep 16 18:42 run_localization.sh.bak-pre-local-domain-20260917
+-rwxr-xr-x 1 root root 3556 Sep 16 18:42 run_orbit_mission.sh
+-rwxr-xr-x 1 root root  661 Sep 17 11:24 stop_command_bridge.sh
+-rwxr-xr-x 1 root root 1096 Sep 16 18:42 stop_distance_mission.sh
+-rwxr-xr-x 1 root root  259 Sep 16 23:46 stop_fleet_bridge.sh
+-rwxr-xr-x 1 root root 1308 Sep 18 08:53 stop_formation_agent.sh
+-rwxr-xr-x 1 root root 1096 Sep 16 18:42 stop_orbit_mission.sh
+
+--- net ---
+1: lo    inet 127.0.0.1/8 scope host lo\       valid_lft forever preferred_lft forever
+3: wlan0    inet 192.168.1.203/24 brd 192.168.1.255 scope global noprefixroute wlan0\       valid_lft forever preferred_lft forever
+4: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0\       valid_lft forever preferred_lft forever
+
+=== END robot3 ===

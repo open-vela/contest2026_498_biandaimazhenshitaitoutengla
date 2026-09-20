@@ -1,0 +1,7 @@
+############################################################################
+# Contest 2026 team 498 VelaMecanum - Make.defs
+############################################################################
+
+ifneq ($(CONFIG_LVX_USE_DEMO_CONTEST2026_498_VELAMECANUM),)
+CONFIGURED_APPS += $(APPDIR)/packages/demos/contest2026_498_velamecanum
+endif

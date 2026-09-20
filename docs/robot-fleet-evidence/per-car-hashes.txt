@@ -1,0 +1,74 @@
+# 四车代码一致性核验（2026-09-20 现场抓取）
+
+对四台车的容器 /opt/openvela-formation/formation_lab、主机 /opt/openvela-formation/scripts
+与 /etc/systemd/system 下的单元文件逐文件 SHA256 比对。
+
+角色：robot1 = 协调者（额外跑 NTP、重配置协调、域内定位），robot2/3/4 = 跟随者。
+
+## 容器 formation_lab
+file                                robot1    robot2    robot3    robot4    结论
+__init__.py                         present   present   present   present   四车一致
+agent.py                            present   present   present   present   四车一致
+auto_localize.py                    present   present   present   present   四车一致
+cli.py                              present   present   present   present   四车一致
+command_bridge.py                   present   present   present   present   四车一致
+command_gate.py                     present   present   present   present   四车一致
+fleet_bridge.py                     present   present   present   present   四车一致
+fleet_endpoint.py                   present   present   present   present   四车一致
+formation_once.py                   present   present   present   present   四车一致
+formation_planner.py                present   present   present   present   四车一致
+isolated_command_test.py            present   -         -         -         单机专用
+laplacian.py                        present   present   present   present   四车一致
+llm_stub.py                         present   present   present   present   四车一致
+mentorpi_agent.py                   present   present   present   present   四车一致
+mission_gateway.py                  present   present   present   present   四车一致
+reconfiguration_agent.py            present   present   present   present   四车一致
+reconfiguration_ros.py              present   present   present   present   DIFF 内容不一致
+reconfiguration_session.py          present   present   present   present   四车一致
+scan_localizer.py                   present   present   present   present   四车一致
+second_order.py                     present   present   present   present   四车一致
+server.py                           present   present   present   present   四车一致
+simulator.py                        present   present   present   present   四车一致
+
+## 主机 scripts
+file                                robot1    robot2    robot3    robot4    结论
+arm_command_bridge.sh               present   present   present   present   四车一致
+disable_formation_agent.sh          present   present   present   present   四车一致
+disarm_command_bridge.sh            present   present   present   present   四车一致
+enable_formation_agent.sh           present   present   present   present   四车一致
+fleet_ntp.py                        present   -         -         -         单机专用
+run_cmd_vel_watchdog.sh             present   present   present   present   四车一致
+run_command_bridge.sh               present   present   present   present   四车一致
+run_distance_mission.sh             present   present   present   present   四车一致
+run_fleet_bridge.sh                 present   present   present   present   四车一致
+run_formation_agent.sh              present   present   present   present   四车一致
+run_localization_vendor_domain.sh   present   -         -         present   部分部署(2/4)
+run_localization.sh                 present   present   present   present   四车一致
+run_orbit_mission.sh                present   present   present   present   四车一致
+run_reconfiguration_coordinator.sh  present   -         -         -         单机专用
+stop_command_bridge.sh              present   present   present   present   四车一致
+stop_distance_mission.sh            present   present   present   present   四车一致
+stop_fleet_bridge.sh                present   present   present   present   四车一致
+stop_formation_agent.sh             present   present   present   present   四车一致
+stop_orbit_mission.sh               present   present   present   present   四车一致
+
+## systemd 单元
+file                                robot1    robot2    robot3    robot4    结论
+cmd-vel-watchdog.service            present   present   present   present   四车一致
+fleet-bridge@.service               present   present   present   present   四车一致
+fleet-ntp.service                   present   -         -         -         单机专用
+formation-agent@.service            present   present   present   present   四车一致
+formation-command-bridge@.service   present   present   present   present   四车一致
+formation-reconfiguration.service   present   -         -         -         单机专用
+
+## 结论
+- 四车共有且内容完全一致：全部运行时模块、指令桥、看门狗、单元文件。
+- 仅 robot1 存在的运行时模块：isolated_command_test.py（域 94/95 隔离集成测试）。
+- 仅 robot1 存在的运维脚本/单元：fleet_ntp.py、fleet-ntp.service、
+  run_reconfiguration_coordinator.sh、formation-reconfiguration.service——robot1 承担协调与授时。
+- run_localization_vendor_domain.sh 只在 robot1 和 robot4 上，robot2/3 没有；
+  属现场分工遗留，不是缺陷，但建议补平以便复现。
+- reconfiguration_ros.py 在 robot1 与 robot2/3/4 之间内容不同：robot2/3/4 的版本读取地图 yaml 的
+  resolution/origin（较新），robot1 仍是硬编码 0.05 / (-10.2,-5.04) 的旧版。
+  入库以 robot2 版本为准，robot1 变体另存 formation_lab/variants/robot1/ 作为差异证据。
+  建议：把 robot1 的该文件更新为与 robot2/3/4 一致。
