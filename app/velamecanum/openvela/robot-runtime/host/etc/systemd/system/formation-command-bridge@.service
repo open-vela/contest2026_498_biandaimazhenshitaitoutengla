@@ -1,0 +1,15 @@
+[Unit]
+Description=Locked formation command bridge for %i
+Requires=docker.service start_node.service
+After=docker.service start_node.service
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/opt/openvela-formation/scripts/run_command_bridge.sh %i
+ExecStopPost=/opt/openvela-formation/scripts/stop_command_bridge.sh %i
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

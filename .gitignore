@@ -1,0 +1,38 @@
+# ============================================================
+# 注意：logs/ 下由大赛日志归集工具导出的 AI Coding 日志必须提交，
+# 不要用任何规则排除 logs/。
+# ============================================================
+
+# 编译产物
+build/
+out/
+*.o
+*.a
+*.elf
+*.hex
+*.map
+
+# Python
+**/__pycache__/
+*.pyc
+*.pyo
+.venv/
+**/.pytest_cache/
+*.egg-info/
+
+# 本机运行环境
+app/velamecanum/work/.venv/
+app/velamecanum/work/formation-venv/
+
+# 现场连接凭据
+app/velamecanum/work/keys/formation_autonomy_ed25519
+app/velamecanum/work/keys/formation_known_hosts
+
+# 编辑器 / 系统临时文件
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# 运行日志（不含 logs/ 下的 AI Coding 日志）
+*.log

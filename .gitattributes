@@ -1,0 +1,6 @@
+# 本仓库包含字节级校验清单（app/velamecanum/outputs/formation-kit/manifest.json）
+# 与 AI Coding 工具导出的原始会话记录（logs/yu-baixi/raw/**）。
+# Git 的换行符自动转换会改写这些文件的字节，导致校验清单在任何一次全新克隆后失配，
+# 也会使“原始会话”不再是原始记录。因此关闭文本转换，保证工作区、提交内容与
+# 校验清单在任何平台上都逐字节一致。
+* -text

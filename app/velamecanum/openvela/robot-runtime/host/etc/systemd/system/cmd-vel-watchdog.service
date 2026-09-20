@@ -1,0 +1,13 @@
+[Unit]
+Description=cmd_vel safety watchdog (stop the car when commands stop)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /opt/openvela-formation/scripts/run_cmd_vel_watchdog.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

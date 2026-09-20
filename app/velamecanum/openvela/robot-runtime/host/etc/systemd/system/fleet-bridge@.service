@@ -1,0 +1,15 @@
+[Unit]
+Description=Read-only ROS2 fleet data bridge for %i
+Requires=docker.service start_node.service
+After=docker.service start_node.service
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/opt/openvela-formation/scripts/run_fleet_bridge.sh %i
+ExecStop=/opt/openvela-formation/scripts/stop_fleet_bridge.sh %i
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

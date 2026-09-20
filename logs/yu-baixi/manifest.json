@@ -1,0 +1,419 @@
+{
+  "schema_version": "1.0",
+  "team_id": "contest2026_498_biandaimazhenshitaitoutengla",
+  "github_login": "yu-baixi",
+  "generator": "codex-raw-session-export",
+  "sessions": [
+    {
+      "session_id": "01a09f5c-8fe1-71d3-8a99-828bad3c9967",
+      "tool": "codex",
+      "started_at": "2026-09-14T10:00:38.626Z",
+      "last_event_at": "2026-09-14T10:28:42.084Z",
+      "event_count": 221,
+      "file_path": "logs/yu-baixi/raw/codex/09-14/rollout-2026-09-14T18-00-38-01a09f5c-8fe1-71d3-8a99-828bad3c9967.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a09f7a-9685-7e30-a5a6-6e3519658d33",
+      "tool": "codex",
+      "started_at": "2026-09-14T10:33:26.406Z",
+      "last_event_at": "2026-09-15T01:33:11.382Z",
+      "event_count": 1888,
+      "file_path": "logs/yu-baixi/raw/codex/09-14/rollout-2026-09-14T18-33-26-01a09f7a-9685-7e30-a5a6-6e3519658d33.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0a23f-bb24-7251-9ebf-3dba638e18ba",
+      "tool": "codex",
+      "started_at": "2026-09-14T23:28:00.805Z",
+      "last_event_at": "2026-09-15T06:54:47.799Z",
+      "event_count": 2847,
+      "file_path": "logs/yu-baixi/raw/codex/09-15/rollout-2026-09-15T07-28-00-01a0a23f-bb24-7251-9ebf-3dba638e18ba.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0a243-37c9-7f91-bee3-c0ff621e815c",
+      "tool": "codex",
+      "started_at": "2026-09-14T23:31:49.322Z",
+      "last_event_at": "2026-09-15T10:21:28.947Z",
+      "event_count": 2334,
+      "file_path": "logs/yu-baixi/raw/codex/09-15/rollout-2026-09-15T07-31-49-01a0a243-37c9-7f91-bee3-c0ff621e815c.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0a34b-b796-71d3-805e-b51b0a40de20",
+      "tool": "codex",
+      "started_at": "2026-09-15T04:20:43.544Z",
+      "last_event_at": "2026-09-15T04:40:10.195Z",
+      "event_count": 118,
+      "file_path": "logs/yu-baixi/raw/codex/09-15/rollout-2026-09-15T12-20-43-01a0a34b-b796-71d3-805e-b51b0a40de20.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0a498-839c-7f40-969f-897768126f71",
+      "tool": "codex",
+      "started_at": "2026-09-15T10:24:13.725Z",
+      "last_event_at": "2026-09-15T10:24:37.838Z",
+      "event_count": 10,
+      "file_path": "logs/yu-baixi/raw/codex/09-15/rollout-2026-09-15T18-24-13-01a0a498-839c-7f40-969f-897768126f71.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0a49d-8871-7473-9f00-31e1e229608b",
+      "tool": "codex",
+      "started_at": "2026-09-15T10:29:42.643Z",
+      "last_event_at": "2026-09-15T10:47:26.439Z",
+      "event_count": 192,
+      "file_path": "logs/yu-baixi/raw/codex/09-15/rollout-2026-09-15T18-29-42-01a0a49d-8871-7473-9f00-31e1e229608b.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0a4bb-b2d9-7420-864c-77a75857a934",
+      "tool": "codex",
+      "started_at": "2026-09-15T11:02:39.578Z",
+      "last_event_at": "2026-09-15T12:31:01.63Z",
+      "event_count": 2794,
+      "file_path": "logs/yu-baixi/raw/codex/09-15/rollout-2026-09-15T19-02-39-01a0a4bb-b2d9-7420-864c-77a75857a934.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0a823-20fb-7f52-90dd-07906bc7fb73",
+      "tool": "codex",
+      "started_at": "2026-09-16T02:54:29.628Z",
+      "last_event_at": "2026-09-16T02:56:03.11Z",
+      "event_count": 157,
+      "file_path": "logs/yu-baixi/raw/codex/09-16/rollout-2026-09-16T10-54-29-01a0a823-20fb-7f52-90dd-07906bc7fb73.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0a867-0965-76e2-a2d0-35bf9f81e999",
+      "tool": "codex",
+      "started_at": "2026-09-16T04:08:40.039Z",
+      "last_event_at": "2026-09-16T13:37:11.61Z",
+      "event_count": 4089,
+      "file_path": "logs/yu-baixi/raw/codex/09-16/rollout-2026-09-16T12-08-40-01a0a867-0965-76e2-a2d0-35bf9f81e999.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0a9d2-496e-7111-8b26-b92d97a72d75",
+      "tool": "codex",
+      "started_at": "2026-09-16T10:45:25.999Z",
+      "last_event_at": "2026-09-16T11:12:46.62Z",
+      "event_count": 804,
+      "file_path": "logs/yu-baixi/raw/codex/09-16/rollout-2026-09-16T18-45-25-01a0a9d2-496e-7111-8b26-b92d97a72d75.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0aa5c-b135-7470-a5d8-0f292afd884c",
+      "tool": "codex",
+      "started_at": "2026-09-16T13:16:36.534Z",
+      "last_event_at": "2026-09-16T13:34:35.002Z",
+      "event_count": 319,
+      "file_path": "logs/yu-baixi/raw/codex/09-16/rollout-2026-09-16T21-16-36-01a0aa5c-b135-7470-a5d8-0f292afd884c.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0aa6d-5173-7032-982d-4ca9b2424f5e",
+      "tool": "codex",
+      "started_at": "2026-09-16T13:34:46.132Z",
+      "last_event_at": "2026-09-16T13:40:28.31Z",
+      "event_count": 190,
+      "file_path": "logs/yu-baixi/raw/codex/09-16/rollout-2026-09-16T21-34-46-01a0aa6d-5173-7032-982d-4ca9b2424f5e.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0ad10-59e5-7ef1-b6fb-907751ef585f",
+      "tool": "codex",
+      "started_at": "2026-09-17T01:52:05.095Z",
+      "last_event_at": "2026-09-17T04:00:57.975Z",
+      "event_count": 3390,
+      "file_path": "logs/yu-baixi/raw/codex/09-17/rollout-2026-09-17T09-52-05-01a0ad10-59e5-7ef1-b6fb-907751ef585f.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0ad20-3429-7ae1-ba56-2d91f3b2ad9c",
+      "tool": "codex",
+      "started_at": "2026-09-17T02:09:24.01Z",
+      "last_event_at": "2026-09-17T02:11:34.921Z",
+      "event_count": 115,
+      "file_path": "logs/yu-baixi/raw/codex/09-17/rollout-2026-09-17T10-09-24-01a0ad20-3429-7ae1-ba56-2d91f3b2ad9c.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0ad3d-5963-7540-a276-dc1beefa7698",
+      "tool": "codex",
+      "started_at": "2026-09-17T02:41:14.084Z",
+      "last_event_at": "2026-09-17T02:41:23.035Z",
+      "event_count": 15,
+      "file_path": "logs/yu-baixi/raw/codex/09-17/rollout-2026-09-17T10-41-14-01a0ad3d-5963-7540-a276-dc1beefa7698.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0ae6d-b084-7060-8293-e988c5b06eec",
+      "tool": "codex",
+      "started_at": "2026-09-17T08:13:39.333Z",
+      "last_event_at": "2026-09-17T08:28:53.82Z",
+      "event_count": 576,
+      "file_path": "logs/yu-baixi/raw/codex/09-17/rollout-2026-09-17T16-13-39-01a0ae6d-b084-7060-8293-e988c5b06eec.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0aea1-d1e8-7331-99c5-f6a80214d20b",
+      "tool": "codex",
+      "started_at": "2026-09-17T09:10:35.753Z",
+      "last_event_at": "2026-09-17T11:53:40.583Z",
+      "event_count": 934,
+      "file_path": "logs/yu-baixi/raw/codex/09-17/rollout-2026-09-17T17-10-35-01a0aea1-d1e8-7331-99c5-f6a80214d20b.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b234-5ff6-7ed2-8ae8-0fad60cb466c",
+      "tool": "codex",
+      "started_at": "2026-09-18T01:49:32.024Z",
+      "last_event_at": "2026-09-18T15:55:43.846Z",
+      "event_count": 3392,
+      "file_path": "logs/yu-baixi/raw/codex/09-18/rollout-2026-09-18T09-49-32-01a0b234-5ff6-7ed2-8ae8-0fad60cb466c.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b4c6-b04e-79d2-bc54-4058736669f1",
+      "tool": "codex",
+      "started_at": "2026-09-18T13:48:35.279Z",
+      "last_event_at": "2026-09-18T21:25:16.416Z",
+      "event_count": 5166,
+      "file_path": "logs/yu-baixi/raw/codex/09-18/rollout-2026-09-18T21-48-35-01a0b4c6-b04e-79d2-bc54-4058736669f1.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b66e-6b16-7053-8a20-50a43ab702e4",
+      "tool": "codex",
+      "started_at": "2026-09-18T21:31:24.822Z",
+      "last_event_at": "2026-09-18T21:32:28.961Z",
+      "event_count": 23,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T05-31-24-01a0b66e-6b16-7053-8a20-50a43ab702e4.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b673-11d4-7c52-a264-0a1b07a1db1e",
+      "tool": "codex",
+      "started_at": "2026-09-18T21:36:29.654Z",
+      "last_event_at": "2026-09-19T08:48:34.906Z",
+      "event_count": 2552,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T05-36-29-01a0b673-11d4-7c52-a264-0a1b07a1db1e.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b77c-398a-75c1-a299-02a8f0eb7428",
+      "tool": "codex",
+      "started_at": "2026-09-19T02:26:06.86Z",
+      "last_event_at": "2026-09-19T02:34:23.948Z",
+      "event_count": 144,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T10-26-06-01a0b77c-398a-75c1-a299-02a8f0eb7428.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b79c-2438-7592-813e-a87c80e94e27",
+      "tool": "codex",
+      "started_at": "2026-09-19T03:00:58.553Z",
+      "last_event_at": "2026-09-19T03:18:41.609Z",
+      "event_count": 149,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T11-00-58-01a0b79c-2438-7592-813e-a87c80e94e27.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b7ae-2eb0-7132-8e47-27a3e6f02b4c",
+      "tool": "codex",
+      "started_at": "2026-09-19T03:20:40.881Z",
+      "last_event_at": "2026-09-19T03:20:50.51Z",
+      "event_count": 14,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T11-20-40-01a0b7ae-2eb0-7132-8e47-27a3e6f02b4c.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b7af-645c-7210-9554-d9417c6fe0a5",
+      "tool": "codex",
+      "started_at": "2026-09-19T03:22:00.158Z",
+      "last_event_at": "2026-09-19T03:40:38.902Z",
+      "event_count": 104,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T11-22-00-01a0b7af-645c-7210-9554-d9417c6fe0a5.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b7e6-9a77-71b1-aa38-086be140140f",
+      "tool": "codex",
+      "started_at": "2026-09-19T04:22:18.489Z",
+      "last_event_at": "2026-09-19T04:25:10.39Z",
+      "event_count": 74,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T12-22-18-01a0b7e6-9a77-71b1-aa38-086be140140f.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b7f1-995a-7652-b954-272268777196",
+      "tool": "codex",
+      "started_at": "2026-09-19T04:34:19.099Z",
+      "last_event_at": "2026-09-19T04:43:30.412Z",
+      "event_count": 87,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T12-34-19-01a0b7f1-995a-7652-b954-272268777196.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b7fc-ecd0-7ed1-86fb-f001349126d9",
+      "tool": "codex",
+      "started_at": "2026-09-19T04:46:41.362Z",
+      "last_event_at": "2026-09-19T04:54:29.651Z",
+      "event_count": 79,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T12-46-41-01a0b7fc-ecd0-7ed1-86fb-f001349126d9.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b805-d5cd-7ad3-8a88-e067548a7c8a",
+      "tool": "codex",
+      "started_at": "2026-09-19T04:56:25.294Z",
+      "last_event_at": "2026-09-19T04:56:57.919Z",
+      "event_count": 39,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T12-56-25-01a0b805-d5cd-7ad3-8a88-e067548a7c8a.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b80d-b4be-7a40-832b-4cfc5a076d42",
+      "tool": "codex",
+      "started_at": "2026-09-19T05:05:01.119Z",
+      "last_event_at": "2026-09-19T05:14:09.64Z",
+      "event_count": 54,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T13-05-01-01a0b80d-b4be-7a40-832b-4cfc5a076d42.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b81b-f3b1-7521-9b2a-19e48215478a",
+      "tool": "codex",
+      "started_at": "2026-09-19T05:20:34.738Z",
+      "last_event_at": "2026-09-19T12:25:49.127Z",
+      "event_count": 402,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T13-20-34-01a0b81b-f3b1-7521-9b2a-19e48215478a.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b844-202c-7602-8f90-74054d7d73b8",
+      "tool": "codex",
+      "started_at": "2026-09-19T06:04:27.565Z",
+      "last_event_at": "2026-09-19T06:15:58.641Z",
+      "event_count": 202,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T14-04-27-01a0b844-202c-7602-8f90-74054d7d73b8.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b855-28a3-72e1-9753-4e3529343acd",
+      "tool": "codex",
+      "started_at": "2026-09-19T06:23:03.845Z",
+      "last_event_at": "2026-09-19T06:23:17.702Z",
+      "event_count": 20,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T14-23-03-01a0b855-28a3-72e1-9753-4e3529343acd.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b858-96a6-7310-a506-bd92f5b7e54e",
+      "tool": "codex",
+      "started_at": "2026-09-19T06:26:48.615Z",
+      "last_event_at": "2026-09-19T08:48:30.301Z",
+      "event_count": 594,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T14-26-48-01a0b858-96a6-7310-a506-bd92f5b7e54e.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b880-b466-76c3-9216-5f43ad40e227",
+      "tool": "codex",
+      "started_at": "2026-09-19T07:10:37.671Z",
+      "last_event_at": "2026-09-19T08:48:24.614Z",
+      "event_count": 137,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T15-10-37-01a0b880-b466-76c3-9216-5f43ad40e227.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b898-20e8-75d2-8e84-10129ae14a06",
+      "tool": "codex",
+      "started_at": "2026-09-19T07:36:12.777Z",
+      "last_event_at": "2026-09-19T13:22:56.046Z",
+      "event_count": 4096,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T15-36-12-01a0b898-20e8-75d2-8e84-10129ae14a06.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b8cc-d602-78d1-9983-d89a85cec4d5",
+      "tool": "codex",
+      "started_at": "2026-09-19T08:33:47.012Z",
+      "last_event_at": "2026-09-19T08:53:54.08Z",
+      "event_count": 322,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T16-33-47-01a0b8cc-d602-78d1-9983-d89a85cec4d5.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b8db-92ff-7aa3-a333-b6d847b3f400",
+      "tool": "codex",
+      "started_at": "2026-09-19T08:49:52.896Z",
+      "last_event_at": "2026-09-19T12:25:46.793Z",
+      "event_count": 199,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T16-49-52-01a0b8db-92ff-7aa3-a333-b6d847b3f400.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0b985-6d81-7350-a6bd-ce798b2e163a",
+      "tool": "codex",
+      "started_at": "2026-09-19T11:55:24.418Z",
+      "last_event_at": "2026-09-19T13:54:17.78Z",
+      "event_count": 1264,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T19-55-24-01a0b985-6d81-7350-a6bd-ce798b2e163a.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    },
+    {
+      "session_id": "01a0ba0c-bf50-78e3-a66c-9606320287fd",
+      "tool": "codex",
+      "started_at": "2026-09-19T14:23:12.721Z",
+      "last_event_at": "2026-09-19T23:03:28.742Z",
+      "event_count": 282,
+      "file_path": "logs/yu-baixi/raw/codex/09-19/rollout-2026-09-19T22-23-12-01a0ba0c-bf50-78e3-a66c-9606320287fd.jsonl",
+      "collection_mode": "raw",
+      "health": "ok"
+    }
+  ],
+  "updated_at": "2026-09-20T13:52:13.909733+00:00"
+}

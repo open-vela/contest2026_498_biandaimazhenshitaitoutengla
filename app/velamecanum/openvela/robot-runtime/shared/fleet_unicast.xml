@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 车队域(42)的 DDS 配置：保留默认传输（同机仍可用组播/共享内存），
+     额外写上四台车的单播地址作为"初始对端"。
+
+     为什么需要：教室 AP 挡住了无线客户端之间的组播（表现为：
+     TCP 能通、ping 不通、跨车 DDS 时好时坏），
+     于是 DDS 的组播发现找不到对方。带上 initialPeersList 后，
+     发现改走单播 UDP，不再依赖组播。
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <participant profile_name="fleet_unicast" is_default_profile="true">
+    <rtps>
+      <builtin>
+        <initialPeersList>
+          <locator><udpv4><address>192.168.1.201</address></udpv4></locator>
+          <locator><udpv4><address>192.168.1.202</address></udpv4></locator>
+          <locator><udpv4><address>192.168.1.203</address></udpv4></locator>
+          <locator><udpv4><address>192.168.1.204</address></udpv4></locator>
+        </initialPeersList>
+      </builtin>
+    </rtps>
+  </participant>
+</profiles>

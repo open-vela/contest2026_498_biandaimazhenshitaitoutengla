@@ -1,0 +1,13 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config LVX_USE_DEMO_CONTEST2026_498_VELAMECANUM
+	bool "Contest 2026 team 498 VelaMecanum formation control"
+	default n
+	---help---
+		Enable the contest 2026 team 498 VelaMecanum formation control
+		demo.  The on-device entry reports the formation capability set;
+		missions are issued through the ai_agent formation_control tool
+		and executed by the four MentorPi M1 vehicles.

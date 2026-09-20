@@ -1,0 +1,13 @@
+[Unit]
+Description=LAN NTP clock for the four formation robots
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/openvela-formation/scripts/fleet_ntp.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

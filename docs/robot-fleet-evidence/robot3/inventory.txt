@@ -1,0 +1,114 @@
+HOST=robot3
+2026-09-19T14:12:08+08:00
+Linux robot3 6.12.47+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.47-1+rpt1~bookworm (2025-09-16) aarch64 GNU/Linux
+
+lo               UNKNOWN        127.0.0.1/8 
+wlan0            UP             192.168.1.203/24 
+docker0          DOWN           172.17.0.1/16 
+
+== docker ps ==
+MentorPi|ros:humble|Up 4 hours
+== docker images ==
+ros:humble|<none>
+== units ==
+  cmd-vel-watchdog.service                                    loaded    active   running cmd_vel safety watchdog (stop the car when commands stop)
+  fleet-bridge@robot3.service                                 loaded    active   running Read-only ROS2 fleet data bridge for robot3
+  formation-agent@robot3.service                              loaded    active   running Distributed CZ225 MentorPi formation agent for robot3
+  formation-command-bridge@robot3.service                     loaded    active   running Locked formation command bridge for robot3
+  initrd-parse-etc.service                                    loaded    inactive dead    Mountpoints Configured in the Real Root
+== unit files ==
+-rw-r--r-- 1 root root  284 Sep 17 20:21 cmd-vel-watchdog.service
+-rw-r--r-- 1 root root  373 Sep 16 23:46 fleet-bridge@.service
+-rw-r--r-- 1 root root  635 Sep 18 08:53 formation-agent@.service
+-rw-r--r-- 1 root root  376 Sep 17 11:24 formation-command-bridge@.service
+== container pip freeze ==
+== container ros2 pkgs ==
+action_msgs
+action_tutorials_cpp
+action_tutorials_interfaces
+action_tutorials_py
+actionlib_msgs
+ament_clang_format
+ament_cmake
+ament_cmake_auto
+ament_cmake_clang_format
+ament_cmake_copyright
+ament_cmake_core
+ament_cmake_cppcheck
+ament_cmake_cpplint
+ament_cmake_export_definitions
+ament_cmake_export_dependencies
+ament_cmake_export_include_directories
+ament_cmake_export_interfaces
+ament_cmake_export_libraries
+ament_cmake_export_link_flags
+ament_cmake_export_targets
+ament_cmake_flake8
+ament_cmake_gen_version_h
+ament_cmake_gmock
+ament_cmake_gtest
+ament_cmake_include_directories
+ament_cmake_libraries
+ament_cmake_lint_cmake
+ament_cmake_pep257
+ament_cmake_pytest
+ament_cmake_python
+ament_cmake_ros
+ament_cmake_target_dependencies
+ament_cmake_test
+ament_cmake_uncrustify
+ament_cmake_version
+ament_cmake_xmllint
+ament_copyright
+ament_cppcheck
+ament_cpplint
+ament_flake8
+ament_index_cpp
+ament_index_python
+ament_lint
+ament_lint_auto
+ament_lint_cmake
+ament_lint_common
+ament_package
+ament_pep257
+ament_uncrustify
+ament_xmllint
+angles
+backward_ros
+behaviortree_cpp_v3
+bond
+bondcpp
+builtin_interfaces
+camera_calibration_parsers
+camera_info_manager
+class_loader
+composition
+composition_interfaces
+compressed_depth_image_transport
+compressed_image_transport
+console_bridge_vendor
+control_msgs
+costmap_queue
+cv_bridge
+demo_nodes_cpp
+demo_nodes_cpp_native
+demo_nodes_py
+diagnostic_msgs
+diagnostic_updater
+domain_coordinator
+dummy_map_server
+dummy_robot_bringup
+dummy_sensors
+dwb_core
+dwb_critics
+dwb_msgs
+dwb_plugins
+== search: submission-missing files ==
+-- vcmd.py
+-- nlp_parse.py
+-- ros_car.py
+-- formation_voice_bridge.py
+-- voice-assistant.service
+-- wakeword.py
+-- voice_text.jsonl
+-- speech-bridge.py
